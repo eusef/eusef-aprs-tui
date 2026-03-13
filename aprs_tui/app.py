@@ -2,6 +2,8 @@
 
 Issue #13: Integration - TUI renders live packet stream.
 Issue #18: Keyboard navigation (j/k, Tab, :, q).
+Issue #20: Message panel (inbox + compose).
+Issue #21: Message compose flow.
 Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 """
 from __future__ import annotations
@@ -9,15 +11,17 @@ from __future__ import annotations
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.widgets import Footer
+from textual.widgets import Footer, Input
 
 from aprs_tui.config import AppConfig
 from aprs_tui.core.connection import ConnectionManager
+from aprs_tui.core.message_tracker import MessageTracker, InboundMessage, TrackedMessage
 from aprs_tui.core.packet_bus import PacketBus
 from aprs_tui.core.station_tracker import StationTracker
 from aprs_tui.protocol.types import APRSPacket
 from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_tcp import KissTcpTransport
+from aprs_tui.ui.message_panel import MessagePanel
 from aprs_tui.ui.station_panel import StationPanel
 from aprs_tui.ui.status_bar import StatusBar
 from aprs_tui.ui.stream_panel import StreamPanel
@@ -45,6 +49,9 @@ class APRSTuiApp(App):
 
         # Quick actions
         Binding("question_mark", "toggle_help", "Help", show=False),
+
+        # Compose
+        Binding("c", "focus_compose", "Compose", show=False),
     ]
 
     def __init__(self, config: AppConfig, **kwargs) -> None:
@@ -57,12 +64,18 @@ class APRSTuiApp(App):
             own_lat=getattr(config.station, "latitude", None),
             own_lon=getattr(config.station, "longitude", None),
         )
+        self._message_tracker = MessageTracker(
+            own_callsign=self.callsign,
+            on_inbound=self._on_inbound_message,
+            on_state_change=self._on_message_state_change,
+        )
 
     def compose(self) -> ComposeResult:
         yield StatusBar(self.callsign)
         with Horizontal(id="main-panels"):
             yield StreamPanel(callsign=self.callsign, id="stream-panel")
             yield StationPanel(id="station-panel")
+        yield MessagePanel(callsign=self.callsign, id="message-panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -114,6 +127,9 @@ class APRSTuiApp(App):
         # Update station tracker
         self._station_tracker.update(pkt)
 
+        # Update message tracker
+        self._message_tracker.handle_packet(pkt)
+
         # Update UI
         try:
             stream = self.query_one(StreamPanel)
@@ -125,6 +141,24 @@ class APRSTuiApp(App):
                 sort_by=station_panel.sort_key
             )
             self.call_from_thread(station_panel.refresh_stations, stations)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Message callbacks
+    # ------------------------------------------------------------------
+
+    def _on_inbound_message(self, msg: InboundMessage) -> None:
+        try:
+            panel = self.query_one(MessagePanel)
+            self.call_from_thread(panel.add_received_message, msg.source, msg.text, msg.msg_id)
+        except Exception:
+            pass
+
+    def _on_message_state_change(self, tracked: TrackedMessage) -> None:
+        try:
+            panel = self.query_one(MessagePanel)
+            self.call_from_thread(panel.update_message_state, tracked.msg_id, tracked.state.value)
         except Exception:
             pass
 
@@ -161,3 +195,12 @@ class APRSTuiApp(App):
     def action_toggle_beacon(self) -> None:
         """F5 beacon toggle placeholder."""
         self.notify("Beacon toggle not yet connected")
+
+    def action_focus_compose(self) -> None:
+        """Focus the message compose To: input."""
+        try:
+            panel = self.query_one(MessagePanel)
+            to_input = panel.query_one("#msg-to-input", Input)
+            to_input.focus()
+        except Exception:
+            pass

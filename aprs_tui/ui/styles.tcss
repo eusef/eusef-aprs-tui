@@ -30,6 +30,12 @@ Screen {
     border: double #58a6ff;
 }
 
+#message-panel {
+    height: auto;
+    max-height: 12;
+    min-height: 6;
+}
+
 StatusBar {
     dock: bottom;
     height: 1;
