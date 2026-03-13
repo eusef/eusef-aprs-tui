@@ -1,19 +1,24 @@
 """Main Textual TUI application for APRS.
 
 Issue #13: Integration - TUI renders live packet stream.
+Issue #18: Keyboard navigation (j/k, Tab, :, q).
 Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 """
 from __future__ import annotations
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
+from textual.widgets import Footer
 
 from aprs_tui.config import AppConfig
 from aprs_tui.core.connection import ConnectionManager
 from aprs_tui.core.packet_bus import PacketBus
+from aprs_tui.core.station_tracker import StationTracker
 from aprs_tui.protocol.types import APRSPacket
 from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_tcp import KissTcpTransport
+from aprs_tui.ui.station_panel import StationPanel
 from aprs_tui.ui.status_bar import StatusBar
 from aprs_tui.ui.stream_panel import StreamPanel
 
@@ -24,7 +29,22 @@ class APRSTuiApp(App):
     CSS_PATH = "ui/styles.tcss"
 
     BINDINGS = [
+        # Global (priority=True so they work everywhere)
         Binding("q", "quit", "Quit", priority=True),
+        Binding("f1", "toggle_help", "Help", priority=True),
+        Binding("f2", "config_stub", "Config", priority=True),
+        Binding("f5", "toggle_beacon", "Beacon", priority=True),
+
+        # Navigation
+        Binding("tab", "focus_next", "Next Panel"),
+        Binding("shift+tab", "focus_previous", "Prev Panel"),
+
+        # Panel scrolling
+        Binding("j", "scroll_down", "Down", show=False),
+        Binding("k", "scroll_up", "Up", show=False),
+
+        # Quick actions
+        Binding("question_mark", "toggle_help", "Help", show=False),
     ]
 
     def __init__(self, config: AppConfig, **kwargs) -> None:
@@ -33,10 +53,17 @@ class APRSTuiApp(App):
         self.callsign = f"{config.station.callsign}-{config.station.ssid}"
         self.packet_bus = PacketBus()
         self._connection_manager: ConnectionManager | None = None
+        self._station_tracker = StationTracker(
+            own_lat=getattr(config.station, "latitude", None),
+            own_lon=getattr(config.station, "longitude", None),
+        )
 
     def compose(self) -> ComposeResult:
         yield StatusBar(self.callsign)
-        yield StreamPanel(callsign=self.callsign, id="stream-panel")
+        with Horizontal(id="main-panels"):
+            yield StreamPanel(callsign=self.callsign, id="stream-panel")
+            yield StationPanel(id="station-panel")
+        yield Footer()
 
     def on_mount(self) -> None:
         self.title = "APRS-TUI"
@@ -84,17 +111,53 @@ class APRSTuiApp(App):
         # Publish to bus
         self.packet_bus.publish(pkt)
 
+        # Update station tracker
+        self._station_tracker.update(pkt)
+
         # Update UI
         try:
             stream = self.query_one(StreamPanel)
             status_bar = self.query_one(StatusBar)
+            station_panel = self.query_one(StationPanel)
             self.call_from_thread(stream.add_packet, pkt)
             self.call_from_thread(status_bar.increment_rx)
+            stations = self._station_tracker.get_stations(
+                sort_by=station_panel.sort_key
+            )
+            self.call_from_thread(station_panel.refresh_stations, stations)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
 
     async def action_quit(self) -> None:
         """Quit the application, disconnecting cleanly."""
         if self._connection_manager:
             await self._connection_manager.disconnect()
         self.exit()
+
+    def action_scroll_down(self) -> None:
+        """Scroll the focused panel down (vim j key)."""
+        focused = self.focused
+        if focused is not None and hasattr(focused, "scroll_down"):
+            focused.scroll_down()
+
+    def action_scroll_up(self) -> None:
+        """Scroll the focused panel up (vim k key)."""
+        focused = self.focused
+        if focused is not None and hasattr(focused, "scroll_up"):
+            focused.scroll_up()
+
+    def action_toggle_help(self) -> None:
+        """Toggle help overlay (stub for now)."""
+        self.notify("Help: j/k=scroll  Tab=switch panel  q=quit  ?=help")
+
+    def action_config_stub(self) -> None:
+        """F2 config placeholder (implemented in Sprint 5)."""
+        self.notify("Configuration wizard not yet available (Sprint 5)")
+
+    def action_toggle_beacon(self) -> None:
+        """F5 beacon toggle placeholder."""
+        self.notify("Beacon toggle not yet connected")

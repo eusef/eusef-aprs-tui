@@ -3,13 +3,30 @@ Screen {
     color: #e6edf3;
 }
 
+#main-panels {
+    height: 1fr;
+    layout: horizontal;
+}
+
 #stream-panel {
+    width: 2fr;
     height: 1fr;
     border: solid #30363d;
     border-title-color: #8b949e;
 }
 
 #stream-panel:focus-within {
+    border: double #58a6ff;
+}
+
+#station-panel {
+    width: 1fr;
+    height: 1fr;
+    border: solid #30363d;
+    border-title-color: #8b949e;
+}
+
+#station-panel:focus-within {
     border: double #58a6ff;
 }
 
