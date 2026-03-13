@@ -6,6 +6,7 @@ import argparse
 import platform
 import shutil
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,6 +30,7 @@ console = Console()
 SECTION_MAP = {
     "all": ["deps", "connection", "station", "beacon", "aprs_is", "write"],
     "server": ["deps", "connection", "write"],
+    "bt": ["deps", "bluetooth", "write"],
     "station": ["station", "write"],
     "beacon": ["beacon", "write"],
     "aprs-is": ["aprs_is", "write"],
@@ -36,15 +38,45 @@ SECTION_MAP = {
 }
 
 
+def detect_platform() -> dict:
+    """Detect the current platform and its capabilities."""
+    system = platform.system()
+    is_wsl = False
+
+    if system == "Linux":
+        try:
+            with open("/proc/version", "r") as f:
+                if "microsoft" in f.read().lower():
+                    is_wsl = True
+        except FileNotFoundError:
+            pass
+
+    return {
+        "system": system,
+        "is_wsl": is_wsl,
+        "has_bluetooth": system in ("Linux", "Darwin") and not is_wsl,
+        "has_serial": system in ("Linux", "Darwin"),
+        "bt_device_prefix": "/dev/cu." if system == "Darwin" else "/dev/rfcomm",
+        "serial_device_prefix": "/dev/cu." if system == "Darwin" else "/dev/tty",
+    }
+
+
 def step_deps_check() -> None:
     """OS detection and dependency check."""
-    os_name = platform.system()
+    plat = detect_platform()
+    os_name = plat["system"]
     console.print(f"\n[bold]Platform:[/bold] {os_name}")
+
+    if plat["is_wsl"]:
+        console.print("  [yellow]![/yellow] WSL2 detected")
+        console.print("  [dim]Bluetooth is not available under WSL2.[/dim]")
+        console.print("  [dim]Serial device passthrough requires usbipd-win.[/dim]")
 
     if os_name == "Linux":
         # Check for socat, rfcomm, bluetoothctl, avahi-browse
         for cmd, purpose in [
             ("socat", "Bluetooth serial bridge"),
+            ("bluetoothctl", "Bluetooth pairing"),
             ("avahi-browse", "mDNS discovery"),
         ]:
             if shutil.which(cmd):
@@ -54,38 +86,223 @@ def step_deps_check() -> None:
     elif os_name == "Darwin":
         console.print("  [green]\u2713[/green] macOS detected (dns-sd available)")
 
+    if plat["has_serial"]:
+        console.print(f"  [green]\u2713[/green] Serial support (prefix: {plat['serial_device_prefix']})")
+    if plat["has_bluetooth"]:
+        console.print(f"  [green]\u2713[/green] Bluetooth support (prefix: {plat['bt_device_prefix']})")
+
     console.print("\n[dim]This wizard assumes Direwolf (or equivalent KISS TCP server)")
     console.print("is already installed and configured on your target host.[/dim]")
     console.print("[dim]If not, see: https://github.com/wb2osz/direwolf[/dim]\n")
 
 
+def step_serial_device() -> str | None:
+    """Detect and select a USB serial device."""
+    from serial.tools import list_ports
+
+    console.print("\n[bold]Scanning for serial devices...[/bold]")
+    ports = list(list_ports.comports())
+
+    if not ports:
+        console.print("  [yellow]No serial devices found.[/yellow]")
+        manual = questionary.text(
+            "Enter device path manually (or leave blank to skip):"
+        ).ask()
+        return manual if manual else None
+
+    choices = []
+    for p in ports:
+        desc = f"{p.device} - {p.description}"
+        if p.manufacturer:
+            desc += f" ({p.manufacturer})"
+        choices.append(questionary.Choice(desc, value=p.device))
+    choices.append(questionary.Choice("Enter manually", value="__manual__"))
+
+    selected = questionary.select("Select serial device:", choices=choices).ask()
+    if selected is None:
+        raise KeyboardInterrupt
+
+    if selected == "__manual__":
+        device = questionary.text("Device path:").ask()
+        if device is None:
+            raise KeyboardInterrupt
+        return device
+
+    return selected
+
+
+def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
+    """Bluetooth TNC pairing and socat bridge setup.
+
+    Returns (device_path, kiss_port) or (None, 0) if cancelled.
+    """
+    if not plat["has_bluetooth"]:
+        console.print("[yellow]Bluetooth is not available on this platform.[/yellow]")
+        if plat["is_wsl"]:
+            console.print("[dim]WSL2 does not support Bluetooth natively.[/dim]")
+            console.print("[dim]Use KISS TCP or APRS-IS instead.[/dim]")
+        return None, 0
+
+    console.print("\n[bold]Bluetooth TNC Setup[/bold]")
+    console.print("[dim]Supported: Kenwood TH-D74/D75, Mobilinkd, UV-Pro[/dim]")
+
+    if plat["system"] == "Darwin":
+        console.print(
+            "\n[dim]On macOS, pair your device via System Preferences > Bluetooth first.[/dim]"
+        )
+        console.print("[dim]The device will appear as /dev/cu.DeviceName[/dim]")
+
+        device = questionary.text(
+            "Enter BT serial device path:",
+            default="/dev/cu.",
+        ).ask()
+        if device is None:
+            raise KeyboardInterrupt
+
+    else:  # Linux
+        console.print("\n[bold]Tips before scanning:[/bold]")
+        console.print(
+            "  Kenwood TH-D74/D75: Menu > APRS > Bluetooth > BT KISS TNC > ON"
+        )
+        console.print("  Mobilinkd TNC: Hold button until LED flashes blue")
+        console.print("  Default PINs: Kenwood=0000, Mobilinkd=1234\n")
+
+        # Check for bluetoothctl
+        if not shutil.which("bluetoothctl"):
+            console.print(
+                "[yellow]bluetoothctl not found. Enter device path manually.[/yellow]"
+            )
+            device = questionary.text(
+                "BT device path:", default="/dev/rfcomm0"
+            ).ask()
+            if device is None:
+                raise KeyboardInterrupt
+        else:
+            # Attempt BT scan
+            console.print("Scanning for Bluetooth devices (10 seconds)...")
+            try:
+                subprocess.run(
+                    ["bluetoothctl", "--timeout", "10", "scan", "on"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                # Parse devices - simplified
+                console.print(
+                    "[dim]Scan complete. Enter the device MAC or path.[/dim]"
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                console.print("[yellow]BT scan failed or timed out.[/yellow]")
+
+            device = questionary.text(
+                "BT device path:", default="/dev/rfcomm0"
+            ).ask()
+            if device is None:
+                raise KeyboardInterrupt
+
+    # socat bridge setup
+    console.print("\n[bold]socat Bridge Configuration[/bold]")
+    console.print(
+        "[dim]socat forwards BT serial to KISS TCP so the TUI can connect.[/dim]"
+    )
+
+    port_str = questionary.text("KISS TCP port for bridge:", default="8001").ask()
+    if port_str is None:
+        raise KeyboardInterrupt
+    port = int(port_str)
+
+    # Generate bridge script
+    generate = questionary.confirm(
+        "Generate start-bt-bridge.sh?", default=True
+    ).ask()
+    if generate:
+        script_content = f"""#!/bin/bash
+# start-bt-bridge.sh - generated by aprs-tui wizard
+# Bridges BT serial to KISS TCP port {port}
+# Usage: ./start-bt-bridge.sh
+
+DEVICE="{device}"
+PORT={port}
+
+echo "Starting BT bridge: $DEVICE -> TCP port $PORT"
+
+while true; do
+    socat TCP-LISTEN:$PORT,reuseaddr,fork FILE:$DEVICE,b9600,raw,echo=0
+    echo "Bridge disconnected, restarting in 3s..."
+    sleep 3
+done
+"""
+        script_path = Path("start-bt-bridge.sh")
+        script_path.write_text(script_content)
+        script_path.chmod(0o755)
+        console.print(f"  [green]\u2713[/green] Bridge script written to {script_path}")
+
+    return device, port
+
+
 def step_connection_type(config: AppConfig) -> AppConfig:
     """Select connection type and configure server."""
+    plat = detect_platform()
+
+    choices = [
+        "Direwolf / KISS TCP (USB/SDR, network)",
+    ]
+    if plat["has_serial"]:
+        choices.append("USB Serial TNC (direct serial connection)")
+    if plat["has_bluetooth"]:
+        choices.append("Bluetooth TNC (Kenwood, Mobilinkd, UV-Pro)")
+    choices.append("APRS-IS only (internet gateway, no radio)")
+
     conn_type = questionary.select(
-        "How is your TNC or radio connected?",
-        choices=[
-            "Direwolf / KISS TCP (USB/SDR, network)",
-            "APRS-IS only (internet gateway, no radio)",
-        ],
+        "How is your TNC or radio connected?", choices=choices
     ).ask()
 
     if conn_type is None:  # User cancelled
         raise KeyboardInterrupt
 
+    if "Serial" in conn_type:
+        device = step_serial_device()
+        if device:
+            baud_str = questionary.text("Baud rate:", default="9600").ask()
+            if baud_str is None:
+                raise KeyboardInterrupt
+            return config.model_copy(
+                update={
+                    "server": ServerConfig(
+                        protocol="kiss-serial", host=device, port=int(baud_str)
+                    ),
+                }
+            )
+
+    if "Bluetooth" in conn_type:
+        device, port = step_bluetooth_setup(plat)
+        if device:
+            return config.model_copy(
+                update={
+                    "server": ServerConfig(
+                        protocol="kiss-bt", host="localhost", port=port
+                    ),
+                }
+            )
+
     if "APRS-IS" in conn_type:
         return config.model_copy(
             update={
-                "server": ServerConfig(protocol="aprs-is", host="rotate.aprs2.net", port=14580),
+                "server": ServerConfig(
+                    protocol="aprs-is", host="rotate.aprs2.net", port=14580
+                ),
                 "aprs_is": APRSISConfig(enabled=True),
             }
         )
 
-    # KISS TCP setup
+    # KISS TCP setup (default / fallback for Direwolf selection)
     host = questionary.text("KISS TCP host:", default=config.server.host).ask()
     if host is None:
         raise KeyboardInterrupt
 
-    port_str = questionary.text("KISS TCP port:", default=str(config.server.port)).ask()
+    port_str = questionary.text(
+        "KISS TCP port:", default=str(config.server.port)
+    ).ask()
     if port_str is None:
         raise KeyboardInterrupt
 
@@ -99,8 +316,12 @@ def step_connection_type(config: AppConfig) -> AppConfig:
         console.print("  [green]\u2713[/green] Connected successfully!")
     except (ConnectionRefusedError, OSError, TimeoutError) as e:
         console.print(f"  [red]\u2717[/red] Could not connect: {e}")
-        console.print(f"  [dim]Verify Direwolf is running and KISSPORT {port} is set[/dim]")
-        proceed = questionary.confirm("Save this configuration anyway?", default=True).ask()
+        console.print(
+            f"  [dim]Verify Direwolf is running and KISSPORT {port} is set[/dim]"
+        )
+        proceed = questionary.confirm(
+            "Save this configuration anyway?", default=True
+        ).ask()
         if not proceed:
             raise KeyboardInterrupt
 
@@ -326,6 +547,17 @@ def main() -> None:
     try:
         if "deps" in steps:
             step_deps_check()
+        if "bluetooth" in steps:
+            plat = detect_platform()
+            device, port = step_bluetooth_setup(plat)
+            if device:
+                config = config.model_copy(
+                    update={
+                        "server": ServerConfig(
+                            protocol="kiss-bt", host="localhost", port=port
+                        ),
+                    }
+                )
         if "connection" in steps:
             config = step_connection_type(config)
         if "connection_test" in steps:
