@@ -1,0 +1,21 @@
+Screen {
+    background: #0d1117;
+    color: #e6edf3;
+}
+
+#stream-panel {
+    height: 1fr;
+    border: solid #30363d;
+    border-title-color: #8b949e;
+}
+
+#stream-panel:focus-within {
+    border: double #58a6ff;
+}
+
+StatusBar {
+    dock: bottom;
+    height: 1;
+    background: #161b22;
+    color: #e6edf3;
+}
