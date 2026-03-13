@@ -6,6 +6,9 @@ Issue #20: Message panel (inbox + compose).
 Issue #21: Message compose flow.
 Issue #27: Inline wizard (F2 suspend/resume).
 Issue #28: Config reload after wizard return.
+Issue #39: Command palette (Ctrl+P / :).
+Issue #40: Packet filter (/ key).
+Issue #41: Raw packet toggle (r key).
 Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 """
 from __future__ import annotations
@@ -16,6 +19,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import Provider, Hit, Hits
 from textual.containers import Horizontal
 from textual.widgets import Footer, Input
 
@@ -33,10 +37,55 @@ from aprs_tui.ui.status_bar import StatusBar
 from aprs_tui.ui.stream_panel import StreamPanel
 
 
+class APRSCommandProvider(Provider):
+    """Custom command provider for APRS TUI."""
+
+    async def search(self, query: str) -> Hits:
+        commands = {
+            "config": "Open full configuration wizard",
+            "config server": "Configure server connection",
+            "config station": "Configure station identity",
+            "config beacon": "Configure beacon settings",
+            "config aprs-is": "Configure APRS-IS gateway",
+            "connect": "Reconnect to server",
+            "disconnect": "Disconnect from server",
+            "beacon on": "Enable beaconing",
+            "beacon off": "Disable beaconing",
+            "quit": "Exit the application",
+        }
+
+        query_lower = query.lower()
+        for cmd, description in commands.items():
+            if query_lower in cmd or query_lower in description.lower():
+                yield Hit(
+                    score=1.0 if cmd.startswith(query_lower) else 0.5,
+                    match_display=cmd,
+                    command=self._make_command(cmd),
+                    text=description,
+                )
+
+    def _make_command(self, cmd: str):
+        async def run_command():
+            app = self.app
+            if cmd == "quit":
+                await app.action_quit()
+            elif cmd == "connect":
+                app.run_worker(app._connect(), exclusive=True)
+            elif cmd == "disconnect":
+                if app._connection_manager:
+                    await app._connection_manager.disconnect()
+            elif cmd.startswith("config"):
+                section = cmd.replace("config", "").strip() or "all"
+                await app.action_config(section)
+        return run_command
+
+
 class APRSTuiApp(App):
     """APRS Terminal User Interface application."""
 
     CSS_PATH = "ui/styles.tcss"
+
+    COMMANDS = {APRSCommandProvider}
 
     BINDINGS = [
         # Global (priority=True so they work everywhere)
@@ -56,8 +105,17 @@ class APRSTuiApp(App):
         # Quick actions
         Binding("question_mark", "toggle_help", "Help", show=False),
 
+        # Command palette (vim-style : to open)
+        Binding("colon", "command_palette", "Command", show=False),
+
         # Compose
         Binding("c", "focus_compose", "Compose", show=False),
+
+        # Packet filter
+        Binding("slash", "open_filter", "Filter", show=False),
+
+        # Raw packet toggle
+        Binding("r", "toggle_raw", "Raw", show=False),
     ]
 
     def __init__(self, config: AppConfig, config_path: Path | None = None, **kwargs) -> None:
@@ -263,3 +321,14 @@ class APRSTuiApp(App):
             to_input.focus()
         except Exception:
             pass
+
+    def action_open_filter(self) -> None:
+        """Open packet filter (placeholder until full filter input widget)."""
+        self.notify("Filter: use command palette (:filter) - coming soon")
+
+    def action_toggle_raw(self) -> None:
+        """Toggle raw packet display in the stream panel."""
+        stream = self.query_one(StreamPanel)
+        stream.toggle_raw()
+        state = "ON" if stream._show_raw else "OFF"
+        self.notify(f"Raw packets: {state}")

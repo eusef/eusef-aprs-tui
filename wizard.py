@@ -296,17 +296,53 @@ def step_connection_type(config: AppConfig) -> AppConfig:
         )
 
     # KISS TCP setup (default / fallback for Direwolf selection)
-    host = questionary.text("KISS TCP host:", default=config.server.host).ask()
+    # Try mDNS discovery first
+    console.print("\nScanning for KISS TNC servers on your network (3s)...")
+
+    import asyncio
+    from aprs_tui.discovery.mdns import discover_kiss_servers
+
+    try:
+        loop = asyncio.new_event_loop()
+        servers = loop.run_until_complete(discover_kiss_servers(timeout=3.0))
+        loop.close()
+    except Exception:
+        servers = []
+
+    host = None
+    port = None
+
+    if servers:
+        console.print(f"  [green]Found {len(servers)} server(s):[/green]")
+        choices = []
+        for s in servers:
+            status = "[green]\u2713[/green]" if s.reachable else "[red]\u2717[/red]"
+            label = f"{status} {s.name} ({s.host}:{s.port})"
+            choices.append(questionary.Choice(label, value=(s.host, s.port)))
+        choices.append(questionary.Choice("Enter manually", value=None))
+
+        selected = questionary.select("Select server:", choices=choices).ask()
+        if selected is not None:
+            host, port = selected
+    else:
+        console.print("  [dim]No KISS TNC servers found via mDNS.[/dim]")
+        console.print("  [dim]To enable auto-discovery, on your Direwolf host run:[/dim]")
+        console.print("  [dim]  Linux: avahi-publish-service \"Direwolf KISS\" _kiss-tnc._tcp 8001 &[/dim]")
+        console.print("  [dim]  macOS: dns-sd -R \"Direwolf KISS\" _kiss-tnc._tcp . 8001 &[/dim]\n")
+
+    # Manual entry if no server was selected via mDNS
     if host is None:
-        raise KeyboardInterrupt
+        host = questionary.text("KISS TCP host:", default=config.server.host).ask()
+        if host is None:
+            raise KeyboardInterrupt
 
-    port_str = questionary.text(
-        "KISS TCP port:", default=str(config.server.port)
-    ).ask()
-    if port_str is None:
-        raise KeyboardInterrupt
+        port_str = questionary.text(
+            "KISS TCP port:", default=str(config.server.port)
+        ).ask()
+        if port_str is None:
+            raise KeyboardInterrupt
 
-    port = int(port_str)
+        port = int(port_str)
 
     # Connection test
     console.print(f"\nTesting connection to {host}:{port}...")

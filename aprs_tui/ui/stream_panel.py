@@ -49,6 +49,11 @@ class StreamPanel(RichLog):
         self.border_title = "Packet Stream"
         self._callsign = callsign
         self._packet_count = 0
+        self._max_lines = max_lines
+        self._filter_text: str = ""
+        self._filter_type: str = ""  # packet type filter
+        self._all_packets: list[APRSPacket] = []  # store all packets for re-filtering
+        self._show_raw = False
 
     @property
     def packet_count(self) -> int:
@@ -56,9 +61,73 @@ class StreamPanel(RichLog):
 
     def add_packet(self, pkt: APRSPacket) -> None:
         """Add a decoded APRS packet to the stream."""
-        self._packet_count += 1
-        line = self._format_packet(pkt)
-        self.write(line)
+        self._all_packets.append(pkt)
+        # Keep bounded
+        if len(self._all_packets) > self._max_lines:
+            self._all_packets = self._all_packets[-self._max_lines:]
+
+        if self._passes_filter(pkt):
+            self._packet_count += 1
+            line = self._format_packet(pkt)
+            self.write(line)
+            if self._show_raw:
+                raw_text = Text(f"  RAW: {pkt.raw}", style="dim #484f58")
+                self.write(raw_text)
+
+    def _passes_filter(self, pkt: APRSPacket) -> bool:
+        """Check if packet passes current filter."""
+        if self._filter_type and pkt.info_type != self._filter_type:
+            return False
+        if self._filter_text:
+            search = self._filter_text.upper()
+            source = (pkt.source or "").upper()
+            raw = (pkt.raw or "").upper()
+            if search not in source and search not in raw:
+                return False
+        return True
+
+    def set_filter(self, text: str = "", packet_type: str = "") -> None:
+        """Set filter and re-render matching packets."""
+        self._filter_text = text
+        self._filter_type = packet_type
+        self.clear()
+        self._packet_count = 0
+        for pkt in self._all_packets:
+            if self._passes_filter(pkt):
+                self._packet_count += 1
+                self.write(self._format_packet(pkt))
+                if self._show_raw:
+                    raw_text = Text(f"  RAW: {pkt.raw}", style="dim #484f58")
+                    self.write(raw_text)
+
+        # Update border title with filter indicator
+        if text or packet_type:
+            parts = []
+            if text:
+                parts.append(f"call={text}")
+            if packet_type:
+                parts.append(f"type={packet_type}")
+            self.border_title = f"Packet Stream [FILTER: {', '.join(parts)}]"
+        else:
+            self.border_title = "Packet Stream"
+
+    def clear_filter(self) -> None:
+        """Clear all filters and re-render."""
+        self.set_filter("", "")
+
+    def toggle_raw(self) -> None:
+        """Toggle raw packet display."""
+        self._show_raw = not self._show_raw
+        # Re-render all packets
+        self.clear()
+        self._packet_count = 0
+        for pkt in self._all_packets:
+            if self._passes_filter(pkt):
+                self._packet_count += 1
+                self.write(self._format_packet(pkt))
+                if self._show_raw:
+                    raw_text = Text(f"  RAW: {pkt.raw}", style="dim #484f58")
+                    self.write(raw_text)
 
     def _format_packet(self, pkt: APRSPacket) -> Text:
         """Format an APRSPacket as a Rich Text with color coding."""

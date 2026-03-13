@@ -1,13 +1,15 @@
 """Entry point for the APRS TUI application.
 
 Usage:
-    python -m aprs_tui [--config PATH]
+    python -m aprs_tui [--config PATH] [--log-level LEVEL]
 
 Issue #26: First-run detection + wizard auto-launch.
+Issue #42: Packet logging + --log-level CLI argument.
 """
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -24,7 +26,16 @@ def main() -> None:
         default=None,
         help=f"Config file path (default: {default_config_path()})",
     )
+    parser.add_argument(
+        "--log-level",
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Set logging level (default: WARNING)",
+    )
     args = parser.parse_args()
+
+    # Set up logging
+    logging.basicConfig(level=getattr(logging, args.log_level))
 
     # Load config
     config_path = args.config
