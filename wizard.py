@@ -91,8 +91,7 @@ def step_deps_check() -> None:
     if plat["has_bluetooth"]:
         console.print(f"  [green]\u2713[/green] Bluetooth support (prefix: {plat['bt_device_prefix']})")
 
-    console.print("\n[dim]This wizard assumes Direwolf (or equivalent KISS TCP server)")
-    console.print("is already installed and configured on your target host.[/dim]")
+    console.print("\n[dim]This wizard assumes Direwolf (or equivalent KISS TCP server)\nis already installed and configured on your target host.[/dim]")
     console.print("[dim]If not, see: https://github.com/wb2osz/direwolf[/dim]\n")
 
 
