@@ -4,16 +4,22 @@ Issue #13: Integration - TUI renders live packet stream.
 Issue #18: Keyboard navigation (j/k, Tab, :, q).
 Issue #20: Message panel (inbox + compose).
 Issue #21: Message compose flow.
+Issue #27: Inline wizard (F2 suspend/resume).
+Issue #28: Config reload after wizard return.
 Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 """
 from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Footer, Input
 
-from aprs_tui.config import AppConfig
+from aprs_tui.config import AppConfig, default_config_path
 from aprs_tui.core.connection import ConnectionManager
 from aprs_tui.core.message_tracker import MessageTracker, InboundMessage, TrackedMessage
 from aprs_tui.core.packet_bus import PacketBus
@@ -36,7 +42,7 @@ class APRSTuiApp(App):
         # Global (priority=True so they work everywhere)
         Binding("q", "quit", "Quit", priority=True),
         Binding("f1", "toggle_help", "Help", priority=True),
-        Binding("f2", "config_stub", "Config", priority=True),
+        Binding("f2", "config('server')", "Config", priority=True),
         Binding("f5", "toggle_beacon", "Beacon", priority=True),
 
         # Navigation
@@ -54,9 +60,10 @@ class APRSTuiApp(App):
         Binding("c", "focus_compose", "Compose", show=False),
     ]
 
-    def __init__(self, config: AppConfig, **kwargs) -> None:
+    def __init__(self, config: AppConfig, config_path: Path | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.config = config
+        self._config_path = config_path
         self.callsign = f"{config.station.callsign}-{config.station.ssid}"
         self.packet_bus = PacketBus()
         self._connection_manager: ConnectionManager | None = None
@@ -188,9 +195,61 @@ class APRSTuiApp(App):
         """Toggle help overlay (stub for now)."""
         self.notify("Help: j/k=scroll  Tab=switch panel  q=quit  ?=help")
 
-    def action_config_stub(self) -> None:
-        """F2 config placeholder (implemented in Sprint 5)."""
-        self.notify("Configuration wizard not yet available (Sprint 5)")
+    async def action_config(self, section: str = "server") -> None:
+        """Suspend TUI and launch wizard for configuration."""
+        wizard_path = Path(__file__).parent.parent / "wizard.py"
+        if not wizard_path.exists():
+            self.notify("Wizard not found", severity="error")
+            return
+
+        config_path = self._config_path
+        cmd = [sys.executable, str(wizard_path), "--section", section]
+        if config_path:
+            cmd.extend(["--config", str(config_path)])
+
+        # Update status bar
+        status_bar = self.query_one(StatusBar)
+        status_bar.connection_state = "WIZARD"
+
+        async with self.suspend():
+            subprocess.run(cmd, check=False)
+
+        # Resume: reload config and reconnect
+        await self._reload_config()
+
+    async def _reload_config(self) -> None:
+        """Reload config from disk and reconnect if needed."""
+        config_path = self._config_path or default_config_path()
+
+        try:
+            new_config = AppConfig.load(config_path)
+        except Exception as e:
+            self.notify(f"Config reload failed: {e}", severity="error")
+            return
+
+        old_config = self.config
+        self.config = new_config
+        self.callsign = f"{new_config.station.callsign}-{new_config.station.ssid}"
+
+        # Update status bar callsign
+        status_bar = self.query_one(StatusBar)
+        status_bar.callsign = self.callsign
+
+        # Check if server config changed - reconnect if so
+        server_changed = (
+            old_config.server.host != new_config.server.host
+            or old_config.server.port != new_config.server.port
+            or old_config.server.protocol != new_config.server.protocol
+        )
+
+        if server_changed:
+            # Disconnect old connection
+            if self._connection_manager:
+                await self._connection_manager.disconnect()
+            # Reconnect with new config
+            self.run_worker(self._connect(), exclusive=True)
+
+        self.notify("Configuration reloaded")
 
     def action_toggle_beacon(self) -> None:
         """F5 beacon toggle placeholder."""

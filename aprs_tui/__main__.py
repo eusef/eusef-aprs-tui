@@ -2,10 +2,13 @@
 
 Usage:
     python -m aprs_tui [--config PATH]
+
+Issue #26: First-run detection + wizard auto-launch.
 """
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,9 +32,31 @@ def main() -> None:
         config = AppConfig.load(config_path)
     except FileNotFoundError:
         path = config_path or default_config_path()
-        print(f"[ERROR] Config file not found: {path}", file=sys.stderr)
-        print("  Run the setup wizard first, or create a config file.", file=sys.stderr)
-        sys.exit(1)
+        print(f"No configuration found at {path}")
+        print("Launching setup wizard...\n")
+
+        # Launch wizard as subprocess
+        wizard_path = Path(__file__).parent.parent / "wizard.py"
+        if not wizard_path.exists():
+            print(f"[ERROR] Wizard not found at {wizard_path}", file=sys.stderr)
+            print("  Create a config file manually or run the wizard.", file=sys.stderr)
+            sys.exit(1)
+
+        result = subprocess.run(
+            [sys.executable, str(wizard_path), "--config", str(path)],
+            check=False,
+        )
+
+        if result.returncode != 0:
+            print("Wizard was cancelled or failed.")
+            sys.exit(1)
+
+        # Try loading config again after wizard
+        try:
+            config = AppConfig.load(config_path)
+        except Exception as e:
+            print(f"[ERROR] Config still invalid after wizard: {e}", file=sys.stderr)
+            sys.exit(1)
     except Exception as e:
         print(f"[ERROR] Invalid config: {e}", file=sys.stderr)
         sys.exit(1)
@@ -39,7 +64,7 @@ def main() -> None:
     # Launch the TUI
     from aprs_tui.app import APRSTuiApp
 
-    app = APRSTuiApp(config)
+    app = APRSTuiApp(config, config_path=config_path)
     app.run()
 
 
