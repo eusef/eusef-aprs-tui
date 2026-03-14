@@ -131,9 +131,12 @@ def step_serial_device() -> str | None:
 
 
 def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
-    """Bluetooth TNC pairing and socat bridge setup.
+    """Bluetooth TNC setup.
 
-    Returns (device_path, kiss_port) or (None, 0) if cancelled.
+    On macOS: connects directly to /dev/cu.* serial device (no socat needed).
+    On Linux: uses rfcomm or socat bridge.
+
+    Returns (device_path, baud_rate) or (None, 0) if cancelled.
     """
     if not plat["has_bluetooth"]:
         console.print("[yellow]Bluetooth is not available on this platform.[/yellow]")
@@ -143,22 +146,71 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
         return None, 0
 
     console.print("\n[bold]Bluetooth TNC Setup[/bold]")
-    console.print("[dim]Supported: Kenwood TH-D74/D75, Mobilinkd, UV-Pro[/dim]")
+    console.print("[dim]Supported: Kenwood TH-D74/D75, Mobilinkd TNC3/TNC4, UV-Pro[/dim]")
 
     if plat["system"] == "Darwin":
+        # --- macOS: direct serial connection (no socat needed) ---
         console.print(
-            "\n[dim]On macOS, pair your device via System Preferences > Bluetooth first.[/dim]"
+            "\n[dim]On macOS, the TUI connects directly to the BT serial device.[/dim]"
         )
-        console.print("[dim]The device will appear as /dev/cu.DeviceName[/dim]")
+        console.print("[dim]No socat bridge is needed.[/dim]\n")
+        console.print("[bold]Step 1:[/bold] Make sure your TNC is paired in System Settings > Bluetooth")
+        console.print("[bold]Step 2:[/bold] Close the Mobilinkd app on your phone (TNC allows one connection)\n")
 
-        device = questionary.text(
-            "Enter BT serial device path:",
-            default="/dev/cu.",
-        ).ask()
-        if device is None:
-            raise KeyboardInterrupt
+        # Auto-detect BT serial devices
+        import glob
+        bt_devices = []
+        for pattern in ["/dev/cu.TNC*", "/dev/cu.Mobilinkd*", "/dev/cu.Kenwood*",
+                        "/dev/cu.UV-Pro*", "/dev/cu.BT*", "/dev/cu.Bluetooth*"]:
+            bt_devices.extend(glob.glob(pattern))
+        # Also include any non-standard cu.* devices (exclude system ones)
+        for dev in glob.glob("/dev/cu.*"):
+            if dev not in bt_devices and dev not in (
+                "/dev/cu.Bluetooth-Incoming-Port", "/dev/cu.debug-console",
+                "/dev/cu.wlan-debug",
+            ):
+                bt_devices.append(dev)
 
-    else:  # Linux
+        if bt_devices:
+            console.print(f"  [green]Found {len(bt_devices)} serial device(s):[/green]")
+            choices = [questionary.Choice(dev, value=dev) for dev in bt_devices]
+            choices.append(questionary.Choice("Enter manually", value="__manual__"))
+
+            selected = questionary.select("Select your TNC device:", choices=choices).ask()
+            if selected is None:
+                raise KeyboardInterrupt
+            if selected == "__manual__":
+                device = questionary.text("Device path:", default="/dev/cu.").ask()
+                if device is None:
+                    raise KeyboardInterrupt
+            else:
+                device = selected
+        else:
+            console.print("  [yellow]No BT TNC devices found.[/yellow]")
+            console.print("  [dim]Make sure your TNC is paired in System Settings > Bluetooth[/dim]")
+            device = questionary.text("Enter device path:", default="/dev/cu.").ask()
+            if device is None:
+                raise KeyboardInterrupt
+
+        # Test the connection
+        console.print(f"\n  Testing {device}...")
+        try:
+            import serial
+            s = serial.Serial(device, 9600, timeout=2)
+            s.close()
+            console.print(f"  [green]\u2713[/green] Device opened successfully!")
+        except Exception as e:
+            console.print(f"  [yellow]![/yellow] Could not open device: {e}")
+            console.print("  [dim]The TNC may not be powered on or paired.[/dim]")
+            proceed = questionary.confirm("Save this config anyway?", default=True).ask()
+            if not proceed:
+                raise KeyboardInterrupt
+
+        baud = 9600
+        return device, baud
+
+    else:
+        # --- Linux: rfcomm or socat bridge ---
         console.print("\n[bold]Tips before scanning:[/bold]")
         console.print(
             "  Kenwood TH-D74/D75: Menu > APRS > Bluetooth > BT KISS TNC > ON"
@@ -166,7 +218,6 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
         console.print("  Mobilinkd TNC: Hold button until LED flashes blue")
         console.print("  Default PINs: Kenwood=0000, Mobilinkd=1234\n")
 
-        # Check for bluetoothctl
         if not shutil.which("bluetoothctl"):
             console.print(
                 "[yellow]bluetoothctl not found. Enter device path manually.[/yellow]"
@@ -177,19 +228,13 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
             if device is None:
                 raise KeyboardInterrupt
         else:
-            # Attempt BT scan
             console.print("Scanning for Bluetooth devices (10 seconds)...")
             try:
                 subprocess.run(
                     ["bluetoothctl", "--timeout", "10", "scan", "on"],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
+                    capture_output=True, text=True, timeout=15,
                 )
-                # Parse devices - simplified
-                console.print(
-                    "[dim]Scan complete. Enter the device MAC or path.[/dim]"
-                )
+                console.print("[dim]Scan complete.[/dim]")
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 console.print("[yellow]BT scan failed or timed out.[/yellow]")
 
@@ -199,44 +244,40 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
             if device is None:
                 raise KeyboardInterrupt
 
-    # socat bridge setup
-    console.print("\n[bold]socat Bridge Configuration[/bold]")
-    console.print(
-        "[dim]socat forwards BT serial to KISS TCP so the TUI can connect.[/dim]"
-    )
+        # Linux needs socat bridge
+        console.print("\n[bold]socat Bridge Configuration[/bold]")
+        console.print(
+            "[dim]socat forwards BT serial to KISS TCP so the TUI can connect.[/dim]"
+        )
 
-    port_str = questionary.text("KISS TCP port for bridge:", default="8001").ask()
-    if port_str is None:
-        raise KeyboardInterrupt
-    port = int(port_str)
+        port_str = questionary.text("KISS TCP port for bridge:", default="8001").ask()
+        if port_str is None:
+            raise KeyboardInterrupt
+        port = int(port_str)
 
-    # Generate bridge script
-    generate = questionary.confirm(
-        "Generate start-bt-bridge.sh?", default=True
-    ).ask()
-    if generate:
-        script_content = f"""#!/bin/bash
+        generate = questionary.confirm(
+            "Generate start-bt-bridge.sh?", default=True
+        ).ask()
+        if generate:
+            script_content = f"""#!/bin/bash
 # start-bt-bridge.sh - generated by aprs-tui wizard
 # Bridges BT serial to KISS TCP port {port}
-# Usage: ./start-bt-bridge.sh
-
 DEVICE="{device}"
 PORT={port}
-
 echo "Starting BT bridge: $DEVICE -> TCP port $PORT"
-
 while true; do
     socat TCP-LISTEN:$PORT,reuseaddr,fork OPEN:$DEVICE,rawer
     echo "Bridge disconnected, restarting in 3s..."
     sleep 3
 done
 """
-        script_path = Path("start-bt-bridge.sh")
-        script_path.write_text(script_content)
-        script_path.chmod(0o755)
-        console.print(f"  [green]\u2713[/green] Bridge script written to {script_path}")
+            script_path = Path("start-bt-bridge.sh")
+            script_path.write_text(script_content)
+            script_path.chmod(0o755)
+            console.print(f"  [green]\u2713[/green] Bridge script written to {script_path}")
 
-    return device, port
+        # On Linux, TUI connects via TCP to the socat bridge
+        return "localhost", port
 
 
 def step_connection_type(config: AppConfig) -> AppConfig:
@@ -274,12 +315,14 @@ def step_connection_type(config: AppConfig) -> AppConfig:
             )
 
     if "Bluetooth" in conn_type:
-        device, port = step_bluetooth_setup(plat)
-        if device:
+        device_or_host, port_or_baud = step_bluetooth_setup(plat)
+        if device_or_host:
+            # On macOS: device_or_host is /dev/cu.*, port_or_baud is baud rate
+            # On Linux: device_or_host is "localhost", port_or_baud is TCP port
             return config.model_copy(
                 update={
                     "server": ServerConfig(
-                        protocol="kiss-bt", host="localhost", port=port
+                        protocol="kiss-bt", host=device_or_host, port=port_or_baud
                     ),
                 }
             )

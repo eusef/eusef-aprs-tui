@@ -162,10 +162,35 @@ class APRSTuiApp(App):
 
     async def _connect(self) -> None:
         """Set up transport and connection manager, then start reading."""
-        transport = KissTcpTransport(
-            self.config.server.host,
-            self.config.server.port,
-        )
+        protocol = self.config.server.protocol
+
+        if protocol == "kiss-tcp":
+            transport = KissTcpTransport(
+                self.config.server.host,
+                self.config.server.port,
+            )
+        elif protocol in ("kiss-serial", "kiss-bt"):
+            from aprs_tui.transport.kiss_serial import KissSerialTransport
+            from aprs_tui.transport.kiss_bt import KissBtTransport
+            # host field stores the device path, port stores baud rate
+            device = self.config.server.host
+            baudrate = self.config.server.port
+            if protocol == "kiss-bt":
+                transport = KissBtTransport(device=device, baudrate=baudrate)
+            else:
+                transport = KissSerialTransport(device=device, baudrate=baudrate)
+        elif protocol == "aprs-is":
+            from aprs_tui.transport.aprs_is import AprsIsTransport
+            transport = AprsIsTransport(
+                host=self.config.server.host,
+                port=self.config.server.port,
+                callsign=self.config.station.callsign,
+                passcode=self.config.aprs_is.passcode,
+                filter_str=self.config.aprs_is.filter,
+            )
+        else:
+            self.notify(f"Unknown protocol: {protocol}", severity="error")
+            return
 
         self._connection_manager = ConnectionManager(
             transport,
