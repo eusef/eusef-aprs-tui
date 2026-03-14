@@ -14,11 +14,12 @@ class StatusBar(Widget):
 
     DEFAULT_CSS = """
     StatusBar {
-        dock: bottom;
-        height: 1;
-        background: #161b22;
+        dock: top;
+        height: 3;
+        background: #1a2233;
         color: #e6edf3;
-        padding: 0 1;
+        padding: 1 1;
+        border-bottom: solid #30363d;
     }
     """
 

@@ -211,30 +211,36 @@ class APRSTuiApp(App):
 
     def _on_state_change(self, state: ConnectionState) -> None:
         """Handle connection state changes (called from ConnectionManager)."""
-        try:
-            status_bar = self.query_one(StatusBar)
-            transport_name = ""
-            if self._connection_manager:
-                transport_name = self._connection_manager.transport.display_name
-            # Use post_message for thread-safe UI update
-            self.post_message(self.StateChanged(state, transport_name))
-        except Exception:
-            pass
+        transport_name = ""
+        if self._connection_manager:
+            transport_name = self._connection_manager.transport.display_name
+        self.call_later(self._ui_update_state, state, transport_name)
 
     def _on_packet(self, pkt: APRSPacket) -> None:
         """Handle incoming packets (called from ConnectionManager)."""
-        # Publish to bus
         self.packet_bus.publish(pkt)
-
-        # Update station tracker
         self._station_tracker.update(pkt)
-
-        # Update message tracker
         self._message_tracker.handle_packet(pkt)
+        self.call_later(self._ui_update_packet, pkt)
 
-        # Post to UI via message (thread-safe)
+    def _ui_update_state(self, state: ConnectionState, transport_name: str) -> None:
+        """Update UI for state change - runs on UI thread."""
         try:
-            self.post_message(self.PacketReceived(pkt))
+            status_bar = self.query_one(StatusBar)
+            status_bar.update_state(state, transport_name)
+        except Exception:
+            pass
+
+    def _ui_update_packet(self, pkt: APRSPacket) -> None:
+        """Update UI for new packet - runs on UI thread."""
+        try:
+            stream = self.query_one(StreamPanel)
+            status_bar = self.query_one(StatusBar)
+            station_panel = self.query_one(StationPanel)
+            stream.add_packet(pkt)
+            status_bar.increment_rx()
+            stations = self._station_tracker.get_stations(sort_by=station_panel.sort_key)
+            station_panel.refresh_stations(stations)
         except Exception:
             pass
 
@@ -253,35 +259,6 @@ class APRSTuiApp(App):
         try:
             panel = self.query_one(MessagePanel)
             panel.update_message_state(tracked.msg_id, tracked.state.value)
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
-    # Textual message handlers (thread-safe UI updates)
-    # ------------------------------------------------------------------
-
-    def on_aprs_tui_app_packet_received(self, event: PacketReceived) -> None:
-        """Handle PacketReceived message - update UI widgets."""
-        pkt = event.packet
-        try:
-            stream = self.query_one(StreamPanel)
-            status_bar = self.query_one(StatusBar)
-            station_panel = self.query_one(StationPanel)
-
-            stream.add_packet(pkt)
-            status_bar.increment_rx()
-            stations = self._station_tracker.get_stations(
-                sort_by=station_panel.sort_key
-            )
-            station_panel.refresh_stations(stations)
-        except Exception:
-            pass
-
-    def on_aprs_tui_app_state_changed(self, event: StateChanged) -> None:
-        """Handle StateChanged message - update status bar."""
-        try:
-            status_bar = self.query_one(StatusBar)
-            status_bar.update_state(event.state, event.transport_name)
         except Exception:
             pass
 

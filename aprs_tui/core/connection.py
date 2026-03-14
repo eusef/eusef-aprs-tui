@@ -148,14 +148,28 @@ class ConnectionManager:
                         self._on_health_warning(False)
 
                 # Decode and publish
+                # APRS-IS returns text lines; KISS returns binary AX.25 frames
                 try:
-                    ax25 = ax25_decode(raw_frame)
-                    text_line = ax25_to_text(ax25)
-                    pkt = decode_packet(text_line, transport=self._transport.display_name)
+                    from aprs_tui.transport.aprs_is import AprsIsTransport
+                    is_text_transport = isinstance(self._transport, AprsIsTransport)
+                except ImportError:
+                    is_text_transport = False
+
+                try:
+                    if is_text_transport:
+                        # APRS-IS: raw_frame is already a text line encoded as bytes
+                        text_line = raw_frame.decode("latin-1", errors="replace")
+                        pkt = decode_packet(text_line, transport=self._transport.display_name)
+                    else:
+                        # KISS: raw_frame is binary AX.25
+                        ax25 = ax25_decode(raw_frame)
+                        text_line = ax25_to_text(ax25)
+                        pkt = decode_packet(text_line, transport=self._transport.display_name)
                 except Exception:
+                    raw_display = raw_frame.decode("latin-1", errors="replace") if is_text_transport else raw_frame.hex()
                     pkt = APRSPacket(
-                        raw=raw_frame.hex(),
-                        parse_error="AX.25 decode failed",
+                        raw=raw_display,
+                        parse_error="Decode failed",
                         transport=self._transport.display_name,
                     )
 
