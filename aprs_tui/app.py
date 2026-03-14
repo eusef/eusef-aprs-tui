@@ -89,33 +89,30 @@ class APRSTuiApp(App):
 
     BINDINGS = [
         # Global (priority=True so they work everywhere)
-        Binding("q", "quit", "Quit", priority=True),
-        Binding("f1", "toggle_help", "Help", priority=True),
-        Binding("f2", "config('server')", "Config", priority=True),
-        Binding("f5", "toggle_beacon", "Beacon", priority=True),
+        Binding("q", "quit", "q Quit", priority=True),
+        Binding("question_mark", "toggle_help", "? Help", priority=True),
+        Binding("ctrl+w", "config('server')", "^W Config", priority=True),
+        Binding("b", "toggle_beacon", "b Beacon", priority=True),
 
         # Navigation
-        Binding("tab", "focus_next", "Next Panel"),
+        Binding("tab", "focus_next", "Tab Next"),
         Binding("shift+tab", "focus_previous", "Prev Panel"),
 
-        # Panel scrolling
-        Binding("j", "scroll_down", "Down", show=False),
+        # Panel scrolling (vim-style)
+        Binding("j", "scroll_down", "j/k Scroll", show=False),
         Binding("k", "scroll_up", "Up", show=False),
 
-        # Quick actions
-        Binding("question_mark", "toggle_help", "Help", show=False),
-
         # Command palette (vim-style : to open)
-        Binding("colon", "command_palette", "Command", show=False),
+        Binding("colon", "command_palette", ": Command", show=False),
 
         # Compose
-        Binding("c", "focus_compose", "Compose", show=False),
+        Binding("c", "focus_compose", "c Compose", show=False),
 
         # Packet filter
-        Binding("slash", "open_filter", "Filter", show=False),
+        Binding("slash", "open_filter", "/ Filter", show=False),
 
         # Raw packet toggle
-        Binding("r", "toggle_raw", "Raw", show=False),
+        Binding("r", "toggle_raw", "r Raw", show=False),
     ]
 
     def __init__(self, config: AppConfig, config_path: Path | None = None, **kwargs) -> None:

@@ -226,7 +226,7 @@ PORT={port}
 echo "Starting BT bridge: $DEVICE -> TCP port $PORT"
 
 while true; do
-    socat TCP-LISTEN:$PORT,reuseaddr,fork FILE:$DEVICE,b9600,raw,echo=0
+    socat TCP-LISTEN:$PORT,reuseaddr,fork OPEN:$DEVICE,rawer
     echo "Bridge disconnected, restarting in 3s..."
     sleep 3
 done
