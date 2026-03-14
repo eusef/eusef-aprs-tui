@@ -21,6 +21,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.command import Provider, Hit, Hits
 from textual.containers import Horizontal
+from textual.message import Message
 from textual.widgets import Footer, Input
 
 from aprs_tui.config import AppConfig, default_config_path
@@ -115,6 +116,19 @@ class APRSTuiApp(App):
         Binding("r", "toggle_raw", "r Raw", show=False),
     ]
 
+    class PacketReceived(Message):
+        """Posted when a new APRS packet is received."""
+        def __init__(self, packet: APRSPacket) -> None:
+            super().__init__()
+            self.packet = packet
+
+    class StateChanged(Message):
+        """Posted when connection state changes."""
+        def __init__(self, state: ConnectionState, transport_name: str) -> None:
+            super().__init__()
+            self.state = state
+            self.transport_name = transport_name
+
     def __init__(self, config: AppConfig, config_path: Path | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.config = config
@@ -177,7 +191,8 @@ class APRSTuiApp(App):
             transport_name = ""
             if self._connection_manager:
                 transport_name = self._connection_manager.transport.display_name
-            self.call_from_thread(status_bar.update_state, state, transport_name)
+            # Use post_message for thread-safe UI update
+            self.post_message(self.StateChanged(state, transport_name))
         except Exception:
             pass
 
@@ -192,17 +207,9 @@ class APRSTuiApp(App):
         # Update message tracker
         self._message_tracker.handle_packet(pkt)
 
-        # Update UI
+        # Post to UI via message (thread-safe)
         try:
-            stream = self.query_one(StreamPanel)
-            status_bar = self.query_one(StatusBar)
-            station_panel = self.query_one(StationPanel)
-            self.call_from_thread(stream.add_packet, pkt)
-            self.call_from_thread(status_bar.increment_rx)
-            stations = self._station_tracker.get_stations(
-                sort_by=station_panel.sort_key
-            )
-            self.call_from_thread(station_panel.refresh_stations, stations)
+            self.post_message(self.PacketReceived(pkt))
         except Exception:
             pass
 
@@ -213,14 +220,43 @@ class APRSTuiApp(App):
     def _on_inbound_message(self, msg: InboundMessage) -> None:
         try:
             panel = self.query_one(MessagePanel)
-            self.call_from_thread(panel.add_received_message, msg.source, msg.text, msg.msg_id)
+            panel.add_received_message(msg.source, msg.text, msg.msg_id)
         except Exception:
             pass
 
     def _on_message_state_change(self, tracked: TrackedMessage) -> None:
         try:
             panel = self.query_one(MessagePanel)
-            self.call_from_thread(panel.update_message_state, tracked.msg_id, tracked.state.value)
+            panel.update_message_state(tracked.msg_id, tracked.state.value)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Textual message handlers (thread-safe UI updates)
+    # ------------------------------------------------------------------
+
+    def on_aprs_tui_app_packet_received(self, event: PacketReceived) -> None:
+        """Handle PacketReceived message - update UI widgets."""
+        pkt = event.packet
+        try:
+            stream = self.query_one(StreamPanel)
+            status_bar = self.query_one(StatusBar)
+            station_panel = self.query_one(StationPanel)
+
+            stream.add_packet(pkt)
+            status_bar.increment_rx()
+            stations = self._station_tracker.get_stations(
+                sort_by=station_panel.sort_key
+            )
+            station_panel.refresh_stations(stations)
+        except Exception:
+            pass
+
+    def on_aprs_tui_app_state_changed(self, event: StateChanged) -> None:
+        """Handle StateChanged message - update status bar."""
+        try:
+            status_bar = self.query_one(StatusBar)
+            status_bar.update_state(event.state, event.transport_name)
         except Exception:
             pass
 
