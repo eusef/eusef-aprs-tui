@@ -37,8 +37,10 @@ Screen {
 }
 
 StatusBar {
-    dock: bottom;
+    dock: top;
     height: 1;
-    background: #161b22;
+    background: #1a2233;
     color: #e6edf3;
+    padding: 0 1;
+    text-style: bold;
 }
