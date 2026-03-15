@@ -49,6 +49,8 @@ class StreamPanel(RichLog):
         self.border_title = "Packet Stream"
         self._callsign = callsign
         self._packet_count = 0
+        self._highlight_callsign: str = ""  # Station to highlight
+        self._hide_transport: str = ""  # Transport name to hide (e.g., "APRS-IS")
         self._max_lines = max_lines
         self._filter_text: str = ""
         self._filter_type: str = ""  # packet type filter
@@ -76,6 +78,8 @@ class StreamPanel(RichLog):
 
     def _passes_filter(self, pkt: APRSPacket) -> bool:
         """Check if packet passes current filter."""
+        if self._hide_transport and self._hide_transport in (pkt.transport or ""):
+            return False
         if self._filter_type and pkt.info_type != self._filter_type:
             return False
         if self._filter_text:
@@ -115,6 +119,23 @@ class StreamPanel(RichLog):
         """Clear all filters and re-render."""
         self.set_filter("", "")
 
+    def set_highlight_station(self, callsign: str) -> None:
+        """Set a callsign to highlight in the stream. Empty string clears highlight."""
+        self._highlight_callsign = callsign.upper()
+        self._rerender()
+
+    def _rerender(self) -> None:
+        """Re-render all visible packets."""
+        self.clear()
+        self._packet_count = 0
+        for pkt in self._all_packets:
+            if self._passes_filter(pkt):
+                self._packet_count += 1
+                self.write(self._format_packet(pkt))
+                if self._show_raw:
+                    raw_text = Text(f"  RAW: {pkt.raw}", style="italic #8b949e")
+                    self.write(raw_text)
+
     def toggle_raw(self) -> None:
         """Toggle raw packet display."""
         self._show_raw = not self._show_raw
@@ -134,14 +155,33 @@ class StreamPanel(RichLog):
         prefix = PACKET_PREFIXES.get(pkt.info_type, "[???]")
         color = PACKET_COLORS.get(pkt.info_type, "#484f58")
 
+        # Check if this packet involves the highlighted station
+        is_highlighted = False
+        if self._highlight_callsign:
+            src = (pkt.source or "").upper()
+            addr = (pkt.addressee or "").upper()
+            dest = (pkt.destination or "").upper()
+            hl = self._highlight_callsign
+            if src == hl or addr == hl or dest == hl:
+                is_highlighted = True
+
         text = Text()
+
+        # Highlight marker
+        if is_highlighted:
+            text.append("▸ ", style="bold #ffa657")
+        else:
+            text.append("  ")
+
         text.append(prefix, style=f"bold {color}")
         text.append(" ")
 
-        # Source callsign - highlight own callsign
+        # Source callsign - highlight own callsign or selected station
         source_style = f"bold {color}"
         if self._callsign and pkt.source and pkt.source.upper() == self._callsign.upper():
             source_style = "bold #ffa657 on #3d2200"
+        elif is_highlighted and (pkt.source or "").upper() == self._highlight_callsign:
+            source_style = "bold #ffa657"
         text.append(f"{pkt.source or '???':<10s}", style=source_style)
 
         if pkt.parse_error:

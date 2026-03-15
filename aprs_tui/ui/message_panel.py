@@ -44,6 +44,8 @@ class MessagePanel(Widget):
         border: solid #30363d;
         border-title-color: #8b949e;
         layout: vertical;
+        padding: 0;
+        overflow: hidden;
     }
     MessagePanel:focus-within {
         border: double #58a6ff;
@@ -53,14 +55,17 @@ class MessagePanel(Widget):
         height: 1fr;
         min-height: 2;
         max-height: 6;
+        margin: 0;
+        padding: 0;
+        scrollbar-size: 0 0;
     }
     #msg-to-input {
         width: 100%;
-        margin: 0 0;
+        margin: 0;
     }
     #msg-text-input {
         width: 100%;
-        margin: 0 0;
+        margin: 0;
     }
     """
 

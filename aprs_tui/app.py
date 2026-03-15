@@ -55,6 +55,7 @@ class APRSCommandProvider(Provider):
             ("Disconnect from server", "disconnect"),
             ("Toggle beacon on/off", "beacon"),
             ("Toggle raw packet display", "raw"),
+            ("Toggle APRS-IS packets", "aprs_is_toggle"),
             ("Quit application", "quit"),
         ]
 
@@ -82,6 +83,8 @@ class APRSCommandProvider(Provider):
                 app.action_toggle_beacon()
             elif action_id == "raw":
                 app.action_toggle_raw()
+            elif action_id == "aprs_is_toggle":
+                app.action_toggle_aprs_is()
             elif action_id.startswith("config_"):
                 section = action_id.replace("config_", "")
                 if section == "all":
@@ -97,37 +100,30 @@ class APRSTuiApp(App):
 
     CSS_PATH = "ui/styles.tcss"
 
-    COMMANDS = {APRSCommandProvider}
+    ENABLE_COMMAND_PALETTE = False  # Using our own command screen
 
     BINDINGS = [
-        # Global (priority=True so they work everywhere)
-        Binding("q", "quit", "q Quit", priority=True),
-        Binding("question_mark", "toggle_help", "? Help", priority=True),
-        Binding("ctrl+w", "config('all')", "^W Config", priority=True),
-        Binding("b", "toggle_beacon", "b Beacon", priority=True),
+        # Shown in footer
+        Binding("q", "quit", "Quit", priority=True),
+        Binding("question_mark", "show_commands", "Help", priority=True),
+        Binding("ctrl+w", "config('all')", "Config", priority=True),
+        Binding("b", "toggle_beacon", "Beacon", priority=True),
+        Binding("c", "focus_compose", "Compose", priority=True),
+        Binding("r", "toggle_raw", "Raw"),
+        Binding("i", "toggle_aprs_is", "APRS-IS"),
+        Binding("y", "copy_packet", "Copy"),
 
-        # Navigation
-        Binding("tab", "focus_next", "Tab Next"),
-        Binding("shift+tab", "focus_previous", "Prev Panel"),
+        # About screen
+        Binding("a", "show_about", "About"),
 
-        # Panel scrolling (vim-style)
-        Binding("j", "scroll_down", "j/k Scroll", show=False),
+        # Hidden (but still active)
+        Binding("tab", "focus_next", "Next", show=False),
+        Binding("shift+tab", "focus_previous", "Prev", show=False),
+        Binding("j", "scroll_down", "Down", show=False),
         Binding("k", "scroll_up", "Up", show=False),
-
-        # Command palette (vim-style : to open)
-        Binding("colon", "command_palette", ": Command", show=False),
-
-        # Cancel pending message
-        Binding("x", "cancel_message", "x Cancel msg", show=False),
-
-        # Compose
-        Binding("c", "focus_compose", "c Compose", priority=True),
-
-        # Packet filter
-        Binding("slash", "open_filter", "/ Filter", show=False),
-
-        # Raw packet toggle
-        Binding("r", "toggle_raw", "r Raw", show=False),
+        Binding("colon", "show_commands", "Commands", show=False),
+        Binding("x", "cancel_message", "Cancel", show=False),
+        Binding("slash", "open_filter", "Filter", show=False),
     ]
 
     class PacketReceived(Message):
@@ -152,6 +148,7 @@ class APRSTuiApp(App):
         self._connection_manager: ConnectionManager | None = None
         self._aprs_is_manager: ConnectionManager | None = None
         self._tx_lock = asyncio.Lock()
+        self._show_aprs_is = True
         self._station_tracker = StationTracker(
             own_lat=getattr(config.station, "latitude", None),
             own_lon=getattr(config.station, "longitude", None),
@@ -302,10 +299,17 @@ class APRSTuiApp(App):
         if hasattr(self, '_dedup') and self._dedup.is_duplicate(pkt):
             return
 
+        # Always track stations and messages even if display is hidden
         self.packet_bus.publish(pkt)
         self._station_tracker.update(pkt)
         self._message_tracker.handle_packet(pkt)
-        self.call_later(self._ui_update_packet, pkt)
+
+        # Always add to stream panel's packet store (for re-render on toggle)
+        # but only visually display if APRS-IS is shown
+        if self._show_aprs_is:
+            self.call_later(self._ui_update_packet, pkt)
+        else:
+            self.call_later(self._ui_store_hidden_packet, pkt)
 
     def _on_state_change(self, state: ConnectionState) -> None:
         """Handle connection state changes (called from ConnectionManager)."""
@@ -344,11 +348,9 @@ class APRSTuiApp(App):
         try:
             stream = self.query_one(StreamPanel)
             status_bar = self.query_one(StatusBar)
-            station_panel = self.query_one(StationPanel)
             stream.add_packet(pkt)
             status_bar.increment_rx()
-            stations = self._station_tracker.get_stations(sort_by=station_panel.sort_key)
-            station_panel.refresh_stations(stations)
+            self._refresh_stations()
         except Exception:
             pass
 
@@ -452,8 +454,44 @@ class APRSTuiApp(App):
             focused.scroll_up()
 
     def action_toggle_help(self) -> None:
-        """Toggle help overlay (stub for now)."""
-        self.notify("Help: j/k=scroll  Tab=switch panel  q=quit  ?=help")
+        """Show key bindings help."""
+        self.notify(
+            "q=Quit  ?=Help  ^W=Config  b=Beacon  c=Compose  r=Raw  "
+            "i=APRS-IS  y=Copy  x=Cancel  j/k=Scroll  Tab=Next",
+            timeout=10,
+        )
+
+    def action_show_about(self) -> None:
+        """Show about screen with version, licenses, and legal info."""
+        from aprs_tui.ui.about_screen import AboutScreen
+        self.push_screen(AboutScreen())
+
+    def action_show_commands(self) -> None:
+        """Show the command palette overlay."""
+        from aprs_tui.ui.command_screen import CommandScreen
+
+        def _on_dismiss(result: str | None) -> None:
+            if result is None:
+                return
+            # Map key to action
+            key_actions = {
+                "q": self.action_quit,
+                "?": self.action_toggle_help,
+                "b": self.action_toggle_beacon,
+                "r": self.action_toggle_raw,
+                "i": self.action_toggle_aprs_is,
+                "y": self.action_copy_packet,
+                "x": self.action_cancel_message,
+                "c": self.action_focus_compose,
+                "a": self.action_show_about,
+            }
+            action = key_actions.get(result)
+            if action:
+                action()
+            elif result == "^W":
+                self.run_worker(self.action_config("all"))
+
+        self.push_screen(CommandScreen(), callback=_on_dismiss)
 
     async def action_config(self, section: str = "server") -> None:
         """Suspend TUI and launch wizard for configuration."""
@@ -562,6 +600,27 @@ class APRSTuiApp(App):
         except Exception:
             pass
 
+    def on_station_panel_station_selected(self, event: StationPanel.StationSelected) -> None:
+        """Highlight packets from selected station in the stream."""
+        try:
+            stream = self.query_one(StreamPanel)
+            stream.set_highlight_station(event.callsign)
+        except Exception:
+            pass
+
+    def on_station_panel_station_activated(self, event: StationPanel.StationActivated) -> None:
+        """Open compose with selected station's callsign pre-filled."""
+        try:
+            panel = self.query_one(MessagePanel)
+            to_input = panel.query_one("#msg-to-input", Input)
+            to_input.value = event.callsign
+            msg_input = panel.query_one("#msg-text-input", Input)
+            msg_input.focus()
+            panel.scroll_visible()
+            self.notify(f"Composing message to {event.callsign}")
+        except Exception:
+            pass
+
     def action_focus_compose(self) -> None:
         """Focus the message compose To: input and scroll it into view."""
         try:
@@ -633,6 +692,117 @@ class APRSTuiApp(App):
                     cancelled += 1
 
         self.notify(f"Cancelled {cancelled} pending message(s)")
+
+    def _ui_increment_rx(self) -> None:
+        """Just increment RX counter without adding to stream."""
+        try:
+            self.query_one(StatusBar).increment_rx()
+        except Exception:
+            pass
+
+    def _ui_store_hidden_packet(self, pkt: APRSPacket) -> None:
+        """Store packet in stream panel without displaying it."""
+        try:
+            stream = self.query_one(StreamPanel)
+            stream._all_packets.append(pkt)
+            if len(stream._all_packets) > stream._max_lines:
+                stream._all_packets = stream._all_packets[-stream._max_lines:]
+            status_bar = self.query_one(StatusBar)
+            status_bar.increment_rx()
+        except Exception:
+            pass
+
+    def action_toggle_aprs_is(self) -> None:
+        """Toggle APRS-IS packet visibility in the stream panel."""
+        self._show_aprs_is = not self._show_aprs_is
+
+        try:
+            stream = self.query_one(StreamPanel)
+            stream._hide_transport = "" if self._show_aprs_is else "APRS-IS"
+            stream._rerender()
+        except Exception:
+            pass
+
+        if self._show_aprs_is:
+            self.notify("APRS-IS packets: shown")
+        else:
+            self.notify("APRS-IS packets: hidden (still receiving)")
+
+        self._refresh_stations()
+
+    def _is_aprs_is_packet(self, pkt: APRSPacket) -> bool:
+        """Check if a packet came from APRS-IS transport."""
+        return "APRS-IS" in (pkt.transport or "")
+
+    def _rerender_stream(self) -> None:
+        """Re-render the stream panel respecting APRS-IS visibility."""
+        try:
+            stream = self.query_one(StreamPanel)
+            stream.clear()
+            stream._packet_count = 0
+            for pkt in stream._all_packets:
+                # Skip APRS-IS packets if hidden
+                if not self._show_aprs_is and self._is_aprs_is_packet(pkt):
+                    continue
+                if stream._passes_filter(pkt):
+                    stream._packet_count += 1
+                    stream.write(stream._format_packet(pkt))
+                    if stream._show_raw:
+                        from rich.text import Text
+                        stream.write(Text(f"  RAW: {pkt.raw}", style="italic #8b949e"))
+        except Exception:
+            pass
+
+    def _refresh_stations(self) -> None:
+        """Refresh station panel, filtering APRS-IS-only stations if hidden."""
+        try:
+            station_panel = self.query_one(StationPanel)
+            stations = self._station_tracker.get_stations(sort_by=station_panel.sort_key)
+
+            if not self._show_aprs_is:
+                # Filter out stations only heard via APRS-IS
+                # Keep stations that have been heard on RF (non-APRS-IS transport)
+                rf_callsigns = set()
+                stream = self.query_one(StreamPanel)
+                for pkt in stream._all_packets:
+                    if not self._is_aprs_is_packet(pkt) and pkt.source:
+                        rf_callsigns.add(pkt.source.upper())
+                stations = [s for s in stations if s.callsign.upper() in rf_callsigns]
+
+            station_panel.refresh_stations(stations)
+        except Exception:
+            pass
+
+    def action_copy_packet(self) -> None:
+        """Copy the last received packet to clipboard (OSC 52)."""
+        try:
+            stream = self.query_one(StreamPanel)
+            if not stream._all_packets:
+                self.notify("No packets to copy")
+                return
+
+            last = stream._all_packets[-1]
+            text = last.raw or ""
+
+            # OSC 52 clipboard - works in most terminals including over SSH
+            import base64
+            encoded = base64.b64encode(text.encode()).decode()
+            sys.stdout.write(f"\033]52;c;{encoded}\a")
+            sys.stdout.flush()
+
+            # Also try pyperclip as fallback
+            try:
+                import subprocess
+                process = subprocess.Popen(
+                    ["pbcopy"], stdin=subprocess.PIPE
+                )
+                process.communicate(text.encode())
+            except Exception:
+                pass
+
+            self.notify(f"Copied: {text[:60]}...")
+        except Exception as e:
+            self.notify(f"Copy failed: {e}", severity="error")
 
     def action_open_filter(self) -> None:
         """Open packet filter (placeholder until full filter input widget)."""

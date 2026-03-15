@@ -35,11 +35,31 @@ Screen {
     height: 10;
     border: solid #30363d;
     border-title-color: #8b949e;
+    padding: 0;
 }
 
 #message-panel:focus-within {
     border: double #58a6ff;
     border-title-color: #58a6ff;
+}
+
+#message-panel Input {
+    border: none;
+    padding: 0 1;
+    height: 1;
+    background: #21262d;
+    margin: 0;
+}
+
+#message-panel Input:focus {
+    border: none;
+    background: #30363d;
+}
+
+#message-panel #msg-inbox {
+    scrollbar-size: 0 0;
+    margin: 0;
+    padding: 0;
 }
 
 StatusBar {
