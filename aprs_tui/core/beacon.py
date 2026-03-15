@@ -111,6 +111,8 @@ class BeaconManager:
     async def _beacon_loop(self) -> None:
         """Timer loop that sends beacons at the configured interval."""
         try:
+            # Send first beacon immediately
+            await self._send_beacon()
             while self._enabled:
                 await asyncio.sleep(self._interval)
                 if not self._enabled:
@@ -119,6 +121,18 @@ class BeaconManager:
         except asyncio.CancelledError:
             pass
 
+    def _build_ax25(self) -> bytes:
+        """Build raw AX.25 frame (no KISS wrapping - transport handles that)."""
+        info = encode_position(
+            self._lat, self._lon,
+            self._symbol_table, self._symbol_code,
+            self._comment,
+        )
+        return ax25_encode(
+            self._callsign, self._destination,
+            self._path, info.encode("latin-1"),
+        )
+
     async def _send_beacon(self) -> None:
         """Build and send one beacon packet."""
         if self._send_func is None:
@@ -126,8 +140,8 @@ class BeaconManager:
             return
 
         try:
-            frame = self.build_kiss_frame()
-            await self._send_func(frame)
+            ax25_data = self._build_ax25()
+            await self._send_func(ax25_data)
             self._beacon_count += 1
             logger.info("Beacon #%d sent", self._beacon_count)
             if self._on_beacon_sent:

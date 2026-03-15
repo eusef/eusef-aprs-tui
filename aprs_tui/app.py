@@ -145,6 +145,7 @@ class APRSTuiApp(App):
             on_inbound=self._on_inbound_message,
             on_state_change=self._on_message_state_change,
         )
+        self._beacon_manager = None  # Created after connection
 
     def compose(self) -> ComposeResult:
         yield StatusBar(self.callsign)
@@ -210,6 +211,23 @@ class APRSTuiApp(App):
 
         try:
             await self._connection_manager.connect()
+
+            # Create beacon manager now that we have a transport
+            from aprs_tui.core.beacon import BeaconManager
+            self._beacon_manager = BeaconManager(
+                callsign=self.callsign,
+                latitude=self.config.beacon.latitude,
+                longitude=self.config.beacon.longitude,
+                symbol_table=self.config.station.symbol_table,
+                symbol_code=self.config.station.symbol_code,
+                comment=self.config.beacon.comment,
+                interval=self.config.beacon.interval,
+                send_func=self._connection_manager.send_frame,
+                on_beacon_sent=lambda: self.call_later(self._on_beacon_sent),
+            )
+
+            if self.config.beacon.enabled:
+                self._beacon_manager.enable()
         except Exception:
             status_bar.update_state(ConnectionState.FAILED, transport.display_name)
 
@@ -386,8 +404,29 @@ class APRSTuiApp(App):
         self.notify("Configuration reloaded")
 
     def action_toggle_beacon(self) -> None:
-        """F5 beacon toggle placeholder."""
-        self.notify("Beacon toggle not yet connected")
+        """Toggle position beacon on/off."""
+        if self._beacon_manager is None:
+            self.notify("Beacon not available (not connected)", severity="warning")
+            return
+
+        if self._beacon_manager.enabled:
+            self._beacon_manager.disable()
+            self.notify("Beacon OFF")
+        else:
+            if self.config.beacon.latitude == 0.0 and self.config.beacon.longitude == 0.0:
+                self.notify("Set your position first (Ctrl+W → beacon)", severity="warning")
+                return
+            self._beacon_manager.enable()
+            self.notify(f"Beacon ON - every {self._beacon_manager.interval}s")
+
+    def _on_beacon_sent(self) -> None:
+        """Called when a beacon is transmitted."""
+        try:
+            status_bar = self.query_one(StatusBar)
+            status_bar.increment_tx()
+            self.notify("Beacon transmitted", timeout=3)
+        except Exception:
+            pass
 
     def action_focus_compose(self) -> None:
         """Focus the message compose To: input and scroll it into view."""
