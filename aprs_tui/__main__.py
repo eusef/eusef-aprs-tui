@@ -34,8 +34,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Set up logging
-    logging.basicConfig(level=getattr(logging, args.log_level))
+    # Set up logging - write to file, not stderr (stderr corrupts the TUI)
+    from platformdirs import user_data_dir
+    log_dir = Path(user_data_dir("aprs-tui"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        filename=str(log_dir / "aprs-tui.log"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
     # Load config
     config_path = args.config

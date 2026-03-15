@@ -202,6 +202,7 @@ class APRSTuiApp(App):
             health_timeout=self.config.connection.health_timeout,
             on_state_change=self._on_state_change,
             on_packet=self._on_packet,
+            on_health_warning=self._on_health_warning,
         )
 
         status_bar = self.query_one(StatusBar)
@@ -225,6 +226,16 @@ class APRSTuiApp(App):
         self._station_tracker.update(pkt)
         self._message_tracker.handle_packet(pkt)
         self.call_later(self._ui_update_packet, pkt)
+
+    def _on_health_warning(self, warning_active: bool) -> None:
+        """Handle health warning from ConnectionManager."""
+        if warning_active:
+            self.call_later(
+                self.notify,
+                "No packets received for 60s - check radio/antenna",
+                severity="warning",
+                timeout=10,
+            )
 
     def _ui_update_state(self, state: ConnectionState, transport_name: str) -> None:
         """Update UI for state change - runs on UI thread."""
@@ -252,16 +263,43 @@ class APRSTuiApp(App):
     # ------------------------------------------------------------------
 
     def _on_inbound_message(self, msg: InboundMessage) -> None:
+        self.call_later(self._ui_inbound_message, msg)
+
+    def _on_message_state_change(self, tracked: TrackedMessage) -> None:
+        self.call_later(self._ui_message_state_change, tracked)
+
+    def _ui_inbound_message(self, msg: InboundMessage) -> None:
+        """Show inbound message in panel + notification."""
         try:
             panel = self.query_one(MessagePanel)
             panel.add_received_message(msg.source, msg.text, msg.msg_id)
+            self.notify(f"Message from {msg.source}: {msg.text}")
+            self.bell()
         except Exception:
             pass
 
-    def _on_message_state_change(self, tracked: TrackedMessage) -> None:
+    def _ui_message_state_change(self, tracked: TrackedMessage) -> None:
+        """Update message state in panel + notification."""
         try:
             panel = self.query_one(MessagePanel)
             panel.update_message_state(tracked.msg_id, tracked.state.value)
+
+            state = tracked.state.value
+            if state == "acked":
+                self.notify(
+                    f"Message to {tracked.addressee} delivered (ack #{tracked.msg_id})",
+                    severity="information",
+                )
+            elif state == "rejected":
+                self.notify(
+                    f"Message to {tracked.addressee} rejected",
+                    severity="error",
+                )
+            elif state == "failed":
+                self.notify(
+                    f"Message to {tracked.addressee} failed after retries",
+                    severity="error",
+                )
         except Exception:
             pass
 
