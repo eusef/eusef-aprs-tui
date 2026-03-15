@@ -373,12 +373,252 @@ done
         return "localhost", port
 
 
+# --- Platform-specific DigiRig detection helpers ---
+
+
+def _detect_digirig_audio(plat: dict) -> tuple[str, str]:
+    """Detect DigiRig audio device per platform.
+
+    Returns (display_name, adevice_config_block) where adevice_config_block
+    is the ADEVICE line (and optional ARATE) for direwolf.conf.
+    """
+    system = plat["system"]
+
+    if system == "Darwin":
+        audio_device = "USB PnP Sound Device"
+        try:
+            result = subprocess.run(
+                ["system_profiler", "SPAudioDataType"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "USB PnP Sound Device" in result.stdout:
+                console.print(f'  [green]\u2713[/green] Found: "{audio_device}" (C-Media CM108)')
+                return audio_device, f'ADEVICE "{audio_device}" "{audio_device}"\nARATE 44100'
+        except Exception:
+            pass
+        console.print(f'  [yellow]![/yellow] "{audio_device}" not detected.')
+        console.print("  [dim]Is the DigiRig plugged in?[/dim]")
+        custom = questionary.text("Audio device name:", default=audio_device).ask()
+        if custom is None:
+            raise KeyboardInterrupt
+        return custom, f'ADEVICE "{custom}" "{custom}"\nARATE 44100'
+
+    elif system == "Linux":
+        console.print("  [dim]Scanning ALSA devices (arecord -l)...[/dim]")
+        try:
+            result = subprocess.run(
+                ["arecord", "-l"], capture_output=True, text=True, timeout=5,
+            )
+            import re
+            for line in result.stdout.splitlines():
+                if any(kw in line for kw in ("USB PnP", "C-Media", "CM108")):
+                    match = re.search(r"card\s+(\d+).*device\s+(\d+)", line)
+                    card_match = re.search(r"card\s+\d+:\s+(\w+)", line)
+                    if match:
+                        card_name = card_match.group(1) if card_match else match.group(1)
+                        dev = match.group(2)
+                        adevice = f"plughw:CARD={card_name},DEV={dev}"
+                        console.print(f"  [green]\u2713[/green] Found: {adevice}")
+                        console.print(f"  [dim]{line.strip()}[/dim]")
+                        return adevice, f"ADEVICE {adevice}"
+            if result.stdout.strip():
+                console.print("  [yellow]![/yellow] DigiRig not auto-detected. Devices found:")
+                for line in result.stdout.splitlines():
+                    if line.strip().startswith("card"):
+                        console.print(f"  [dim]  {line.strip()}[/dim]")
+            else:
+                console.print("  [yellow]![/yellow] No ALSA recording devices found.")
+        except FileNotFoundError:
+            console.print("  [yellow]![/yellow] 'arecord' not found (install alsa-utils).")
+        except Exception as e:
+            console.print(f"  [yellow]![/yellow] Audio scan error: {e}")
+        custom = questionary.text(
+            "ALSA device (run 'arecord -l'):", default="plughw:CARD=Set,DEV=0",
+        ).ask()
+        if custom is None:
+            raise KeyboardInterrupt
+        return custom, f"ADEVICE {custom}"
+
+    else:  # Windows
+        console.print("  [dim]Run 'direwolf -h' to list audio device indices.[/dim]")
+        console.print("  [dim]Look for 'USB PnP Sound Device' or 'C-Media'.[/dim]")
+        try:
+            result = subprocess.run(
+                ["direwolf", "-h"], capture_output=True, text=True, timeout=10,
+            )
+            for line in (result.stdout + result.stderr).splitlines():
+                if any(kw in line for kw in ("Sound", "Audio", "USB", "C-Media")):
+                    console.print(f"  [dim]  {line.strip()}[/dim]")
+        except Exception:
+            pass
+        idx = questionary.text("Audio device index:", default="1").ask()
+        if idx is None:
+            raise KeyboardInterrupt
+        return f"Device {idx}", f"ADEVICE {idx}"
+
+
+def _detect_digirig_ptt(plat: dict) -> str:
+    """Detect DigiRig serial port for PTT per platform. Returns PTT config line."""
+    import glob as glob_mod
+
+    system = plat["system"]
+
+    if system == "Darwin":
+        serial_devs = (
+            glob_mod.glob("/dev/cu.usbserial-*")
+            + glob_mod.glob("/dev/cu.SLAB_USBtoUART*")
+        )
+    elif system == "Linux":
+        serial_devs = (
+            glob_mod.glob("/dev/ttyUSB*")
+            + glob_mod.glob("/dev/ttyACM*")
+        )
+    else:  # Windows
+        serial_devs = []
+        try:
+            from serial.tools import list_ports
+            serial_devs = [
+                p.device for p in list_ports.comports()
+                if any(kw in (p.description or "") for kw in ("USB", "Serial", "DigiRig"))
+            ]
+        except ImportError:
+            pass
+
+    if serial_devs:
+        if len(serial_devs) == 1:
+            ptt_dev = serial_devs[0]
+            console.print(f"  [green]\u2713[/green] Serial port: {ptt_dev}")
+        else:
+            choices = [questionary.Choice(d, value=d) for d in serial_devs]
+            ptt_dev = questionary.select(
+                "Select DigiRig serial port:", choices=choices,
+            ).ask()
+            if ptt_dev is None:
+                raise KeyboardInterrupt
+        console.print(f"  [green]\u2713[/green] PTT: RTS via {ptt_dev}")
+        return f"PTT {ptt_dev} RTS"
+
+    console.print("  [yellow]![/yellow] No USB serial port found.")
+    model = questionary.select(
+        "Which DigiRig model?",
+        choices=[
+            questionary.Choice("DigiRig Mobile (has serial port)", value="mobile"),
+            questionary.Choice("DigiRig Lite (VOX only)", value="lite"),
+        ],
+    ).ask()
+    if model is None:
+        raise KeyboardInterrupt
+    if model == "mobile":
+        console.print("  [dim]Make sure the DigiRig is plugged in.[/dim]")
+        if system == "Windows":
+            default_dev = "COM3"
+        elif system == "Linux":
+            default_dev = "/dev/ttyUSB0"
+        else:
+            default_dev = "/dev/cu.usbserial-0001"
+        manual = questionary.text(
+            "Enter serial port (or Enter for VOX):", default=default_dev,
+        ).ask()
+        if manual:
+            return f"PTT {manual} RTS"
+    console.print("  [dim]Make sure VOX is enabled on your radio.[/dim]")
+    return "PTT VOX"
+
+
+def _step_digirig_setup(config: AppConfig) -> AppConfig:
+    """Set up DigiRig with local Direwolf — generates direwolf.conf in app folder."""
+    plat = detect_platform()
+    system = plat["system"]
+
+    console.print("\n[bold]DigiRig Setup[/bold]")
+    console.print("[dim]This will configure Direwolf as a local software TNC.[/dim]")
+    console.print("[dim]Direwolf will start/stop automatically with the app.[/dim]\n")
+
+    app_dir = Path(__file__).parent
+    dw_conf_path = app_dir / "direwolf.conf"
+
+    # Check Direwolf installation (platform-specific install hints)
+    dw_bin = shutil.which("direwolf")
+    if not dw_bin:
+        if system == "Darwin":
+            candidates = ["/opt/local/bin/direwolf", "/opt/homebrew/bin/direwolf", "/usr/local/bin/direwolf"]
+        elif system == "Linux":
+            candidates = ["/usr/bin/direwolf", "/usr/local/bin/direwolf"]
+        else:
+            candidates = []
+        for candidate in candidates:
+            if Path(candidate).exists():
+                dw_bin = candidate
+                break
+    if dw_bin:
+        console.print(f"  [green]\u2713[/green] Direwolf found: {dw_bin}")
+    else:
+        console.print("  [red]\u2717[/red] Direwolf not found.")
+        if system == "Darwin":
+            console.print("  [dim]Install with: brew install direwolf[/dim]")
+        elif system == "Linux":
+            console.print("  [dim]Install with: sudo apt install direwolf[/dim]")
+        else:
+            console.print("  [dim]Download from: github.com/wb2osz/direwolf/releases[/dim]")
+        proceed = questionary.confirm("Continue setup anyway?", default=False).ask()
+        if not proceed:
+            raise KeyboardInterrupt
+
+    # Detect audio device (platform-aware)
+    console.print("\n[bold]Audio Device[/bold]")
+    _audio_name, adevice_block = _detect_digirig_audio(plat)
+
+    # Detect PTT serial port (platform-aware)
+    console.print("\n[bold]PTT Control[/bold]")
+    ptt_line = _detect_digirig_ptt(plat)
+
+    # Get callsign from config
+    callsign = f"{config.station.callsign}-{config.station.ssid}"
+
+    # Platform label for config header
+    platform_label = {"Darwin": "macOS", "Linux": "Linux", "Windows": "Windows"}.get(system, system)
+
+    # Write direwolf.conf
+    if dw_conf_path.exists():
+        shutil.copy2(dw_conf_path, str(dw_conf_path) + ".bak")
+        console.print(f"\n  [dim]Backed up existing direwolf.conf[/dim]")
+
+    dw_conf_path.write_text(f"""\
+# Direwolf config for {platform_label} + DigiRig
+# Generated by APRS TUI wizard
+# Direwolf is started/stopped automatically with the app.
+
+{adevice_block}
+
+CHANNEL 0
+MYCALL {callsign}
+MODEM 1200
+
+{ptt_line}
+TXDELAY 40
+TXTAIL 10
+
+KISSPORT 8001
+AGWPORT 0
+""")
+
+    console.print(f"\n  [green]\u2713[/green] Direwolf config written: {dw_conf_path}")
+    console.print("  [dim]Direwolf will start automatically when you launch the app.[/dim]")
+
+    return config.model_copy(
+        update={
+            "server": ServerConfig(protocol="kiss-tcp", host="127.0.0.1", port=8001),
+        }
+    )
+
+
 def step_connection_type(config: AppConfig) -> AppConfig:
     """Select connection type and configure server."""
     plat = detect_platform()
 
     choices = [
-        "Direwolf / KISS TCP (USB/SDR, network)",
+        "DigiRig (local Direwolf — auto-managed)",
+        "Direwolf / KISS TCP (remote or manual)",
     ]
     if plat["has_serial"]:
         choices.append("USB Serial TNC (direct serial connection)")
@@ -392,6 +632,9 @@ def step_connection_type(config: AppConfig) -> AppConfig:
 
     if conn_type is None:  # User cancelled
         raise KeyboardInterrupt
+
+    if "DigiRig" in conn_type:
+        return _step_digirig_setup(config)
 
     if "Serial" in conn_type:
         device = step_serial_device()
@@ -556,11 +799,40 @@ def step_station(config: AppConfig) -> AppConfig:
     else:
         sym_table, sym_code = symbol_choice[0], symbol_choice[1]
 
+    # Station position
+    console.print("\n[bold]Station Position[/bold]")
+    console.print("[dim]Your coordinates are used for:[/dim]")
+    console.print("[dim]  - APRS-IS server filtering (receive packets near you)[/dim]")
+    console.print("[dim]  - Distance/bearing to other stations[/dim]")
+    console.print("[dim]  - Position beaconing (if enabled later)[/dim]")
+    console.print("[dim]Tip: search your address at latlong.net[/dim]\n")
+
+    default_lat = config.station.latitude if config.station.latitude != 0.0 else config.beacon.latitude
+    default_lon = config.station.longitude if config.station.longitude != 0.0 else config.beacon.longitude
+
+    lat_str = questionary.text(
+        "Latitude (decimal degrees, e.g. 45.5):",
+        default=str(default_lat) if default_lat != 0.0 else "",
+    ).ask()
+    if lat_str is None:
+        raise KeyboardInterrupt
+    lat = float(lat_str) if lat_str else 0.0
+
+    lon_str = questionary.text(
+        "Longitude (decimal degrees, e.g. -122.6):",
+        default=str(default_lon) if default_lon != 0.0 else "",
+    ).ask()
+    if lon_str is None:
+        raise KeyboardInterrupt
+    lon = float(lon_str) if lon_str else 0.0
+
     return config.model_copy(
         update={
             "station": StationConfig(
                 callsign=callsign.upper(),
                 ssid=ssid,
+                latitude=lat,
+                longitude=lon,
                 symbol_table=sym_table,
                 symbol_code=sym_code,
             ),
@@ -591,19 +863,39 @@ def step_beacon(config: AppConfig) -> AppConfig:
             raise KeyboardInterrupt
         interval = max(int(interval_str), 60)
 
-        lat_str = questionary.text(
-            "Latitude (decimal degrees):", default=str(config.beacon.latitude)
-        ).ask()
-        if lat_str is None:
-            raise KeyboardInterrupt
-        lat = float(lat_str)
+        # Default to station position, allow override for beacon
+        default_lat = config.beacon.latitude if config.beacon.latitude != 0.0 else config.station.latitude
+        default_lon = config.beacon.longitude if config.beacon.longitude != 0.0 else config.station.longitude
 
-        lon_str = questionary.text(
-            "Longitude (decimal degrees):", default=str(config.beacon.longitude)
-        ).ask()
-        if lon_str is None:
-            raise KeyboardInterrupt
-        lon = float(lon_str)
+        if default_lat != 0.0 and default_lon != 0.0:
+            console.print(f"  [dim]Using station position: {default_lat}, {default_lon}[/dim]")
+            use_station = questionary.confirm(
+                "Use your station position for beaconing?", default=True
+            ).ask()
+            if use_station is None:
+                raise KeyboardInterrupt
+            if use_station:
+                lat = default_lat
+                lon = default_lon
+            else:
+                lat_str = questionary.text("Beacon latitude:", default=str(default_lat)).ask()
+                if lat_str is None:
+                    raise KeyboardInterrupt
+                lat = float(lat_str)
+                lon_str = questionary.text("Beacon longitude:", default=str(default_lon)).ask()
+                if lon_str is None:
+                    raise KeyboardInterrupt
+                lon = float(lon_str)
+        else:
+            console.print("  [yellow]No station position set. Enter beacon coordinates.[/yellow]")
+            lat_str = questionary.text("Beacon latitude (decimal degrees):").ask()
+            if lat_str is None:
+                raise KeyboardInterrupt
+            lat = float(lat_str) if lat_str else 0.0
+            lon_str = questionary.text("Beacon longitude (decimal degrees):").ask()
+            if lon_str is None:
+                raise KeyboardInterrupt
+            lon = float(lon_str) if lon_str else 0.0
 
         comment = (
             questionary.text(
@@ -664,13 +956,16 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
     console.print("[dim]A filter tells the server what packets to send you.[/dim]")
     console.print("[dim]Without a filter, you may receive no packets.[/dim]\n")
 
-    # Auto-generate default filter from beacon position
-    default_filter = config.aprs_is.filter
-    if not default_filter and config.beacon.latitude != 0.0:
-        lat = config.beacon.latitude
-        lon = config.beacon.longitude
-        default_filter = f"r/{lat}/{lon}/100"
-        console.print(f"  [green]Auto-generated from your beacon position:[/green] {default_filter}")
+    # Auto-generate filter from station position
+    stn_lat = config.station.latitude if config.station.latitude != 0.0 else config.beacon.latitude
+    stn_lon = config.station.longitude if config.station.longitude != 0.0 else config.beacon.longitude
+    existing_filter = config.aprs_is.filter
+    # Regenerate if no filter, or if it references 0.0/0.0 (stale coords)
+    if stn_lat != 0.0 and (not existing_filter or "0.0/0.0" in existing_filter):
+        default_filter = f"r/{stn_lat}/{stn_lon}/100"
+        console.print(f"  [green]Auto-generated from your station position:[/green] {default_filter}")
+    else:
+        default_filter = existing_filter
 
     filter_choice = questionary.select(
         "How would you like to set the filter?",
@@ -704,8 +999,8 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
     if filter_choice is None:
         raise KeyboardInterrupt
 
-    lat = config.beacon.latitude
-    lon = config.beacon.longitude
+    lat = stn_lat
+    lon = stn_lon
     callsign = config.station.callsign
 
     if filter_choice == "radius_100":
@@ -730,7 +1025,7 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
         ).ask() or ""
 
     if lat == 0.0 and lon == 0.0 and filter_choice.startswith("radius"):
-        console.print("\n  [yellow]Warning: Your position is 0,0. Set your position in beacon config first.[/yellow]")
+        console.print("\n  [yellow]Warning: Your position is 0,0. Set your position in station config first.[/yellow]")
         console.print("  [dim]The radius filter won't work correctly without a valid position.[/dim]")
 
     console.print(f"\n  Filter: [bold]{filter_str}[/bold]")
@@ -759,9 +1054,15 @@ def step_write_config(config: AppConfig, config_path: Path) -> None:
         f"ON, {config.aprs_is.host}" if config.aprs_is.enabled else "OFF"
     )
 
+    if config.station.latitude != 0.0:
+        position_str = f"{config.station.latitude}, {config.station.longitude}"
+    else:
+        position_str = "Not set"
+
     summary = f"""[bold]Configuration Summary[/bold]
 
 Callsign:  {callsign}
+Position:  {position_str}
 Symbol:    {config.station.symbol_table}{config.station.symbol_code}
 Server:    {config.server.host}:{config.server.port} ({config.server.protocol})
 Beacon:    {beacon_status}
