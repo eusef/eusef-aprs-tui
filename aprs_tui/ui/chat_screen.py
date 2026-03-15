@@ -22,6 +22,25 @@ class ChatMessage:
     state: str = ""  # pending, acked, failed, received
     timestamp: float = field(default_factory=time.time)
 
+    def to_dict(self) -> dict:
+        return {
+            "direction": self.direction,
+            "text": self.text,
+            "msg_id": self.msg_id,
+            "state": self.state,
+            "timestamp": self.timestamp,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ChatMessage":
+        return cls(
+            direction=d.get("direction", "received"),
+            text=d.get("text", ""),
+            msg_id=d.get("msg_id"),
+            state=d.get("state", ""),
+            timestamp=d.get("timestamp", time.time()),
+        )
+
 
 class ChatScreen(ModalScreen[None]):
     """Modal chat overlay with a single station. Background activity visible."""
@@ -96,12 +115,16 @@ class ChatScreen(ModalScreen[None]):
 
     def add_message(self, direction: str, text: str, msg_id: str | None = None,
                     state: str = "") -> None:
-        """Add a message to the conversation and render it."""
+        """Add a message to the conversation. Renders if screen is mounted."""
         msg = ChatMessage(
             direction=direction, text=text, msg_id=msg_id, state=state,
         )
         self.messages.append(msg)
-        self._render_message(msg)
+        # Only render if the screen is mounted (widgets exist)
+        try:
+            self._render_message(msg)
+        except Exception:
+            pass  # Not mounted yet - will render in on_mount
 
     def update_message_state(self, msg_id: str, new_state: str) -> None:
         """Update state of a sent message and re-render."""
@@ -109,7 +132,10 @@ class ChatScreen(ModalScreen[None]):
             if msg.msg_id == msg_id:
                 msg.state = new_state
                 break
-        self._rerender()
+        try:
+            self._rerender()
+        except Exception:
+            pass
 
     def _render_message(self, msg: ChatMessage) -> None:
         """Render a single chat message."""

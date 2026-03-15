@@ -74,10 +74,17 @@ class StationPanel(DataTable):
         self.cursor_type = "row"
         self.show_cursor = False  # No selection by default
 
-    def refresh_stations(self, stations: list[StationRecord]) -> None:
-        """Update the table with current station data, preserving selection."""
+    def refresh_stations(self, stations: list[StationRecord],
+                         chat_callsigns: set[str] | None = None) -> None:
+        """Update the table with current station data, preserving selection.
+
+        Args:
+            stations: List of station records to display
+            chat_callsigns: Set of callsigns with chat history (shown with indicator)
+        """
         # Remember current selection
         prev_callsign = self.selected_callsign
+        chats = chat_callsigns or set()
 
         self.clear()
         self._callsigns.clear()
@@ -88,8 +95,12 @@ class StationPanel(DataTable):
             sym = SYMBOL_MAP.get(sym_key, "")
             dist = f"{stn.distance_km:.1f}km" if stn.distance_km is not None else ""
             brg = f"{stn.bearing:.0f}\u00b0" if stn.bearing is not None else ""
+            # Chat indicator
+            call_display = stn.callsign
+            if stn.callsign.upper() in chats:
+                call_display = f"💬{stn.callsign}"
             self.add_row(
-                stn.callsign, sym, _format_age(age), dist, brg, str(stn.packet_count)
+                call_display, sym, _format_age(age), dist, brg, str(stn.packet_count)
             )
             self._callsigns.append(stn.callsign)
         self.border_title = f"Stations ({len(stations)})"

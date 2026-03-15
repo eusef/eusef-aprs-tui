@@ -56,6 +56,11 @@ class StatusBar(Static):
         # TX/RX counters
         text.append(f" TX: {self._tx_count}  RX: {self._rx_count} ", style="white")
 
+        text.append("\u2502", style="#30363d")
+
+        # Ko-fi support link
+        text.append(" ☕ Support this app: ko-fi.com/philj2 ", style="#e3b341")
+
         self.update(text)
 
     def update_state(self, state: ConnectionState, transport_name: str = "") -> None:

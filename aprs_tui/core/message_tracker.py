@@ -64,6 +64,7 @@ class MessageTracker:
         on_state_change: Callable[[TrackedMessage], None] | None = None,
         on_inbound: Callable[[InboundMessage], None] | None = None,
         on_retry: Callable[[TrackedMessage, int, int], None] | None = None,
+        on_send_ack: Callable[[str, str], None] | None = None,
     ) -> None:
         self._own_callsign = own_callsign.upper().strip()
         self._max_retries = max_retries
@@ -71,6 +72,7 @@ class MessageTracker:
         self._on_state_change = on_state_change
         self._on_inbound = on_inbound
         self._on_retry = on_retry  # callback(tracked, attempt, delay_until_next)
+        self._on_send_ack = on_send_ack  # callback(source_callsign, msg_id)
         self._next_id = 1
         self._pending: dict[str, TrackedMessage] = {}
         self._history: list[TrackedMessage] = []
@@ -159,8 +161,8 @@ class MessageTracker:
                 self._on_inbound(msg)
 
             # Auto-ack if message has an ID
-            if pkt.message_id and is_for_us and self._send_func:
-                asyncio.create_task(self._send_ack(pkt.source or "", pkt.message_id))
+            if pkt.message_id and is_for_us and self._on_send_ack:
+                self._on_send_ack(pkt.source or "", pkt.message_id)
 
     def _handle_ack(self, msg_id: str) -> None:
         if msg_id not in self._pending:

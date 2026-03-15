@@ -14,8 +14,11 @@ Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import sys
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -160,6 +163,7 @@ class APRSTuiApp(App):
             on_inbound=self._on_inbound_message,
             on_state_change=self._on_message_state_change,
             on_retry=self._on_message_retry,
+            on_send_ack=self._on_send_ack,
         )
         self._beacon_manager = None  # Created after connection
 
@@ -441,6 +445,12 @@ class APRSTuiApp(App):
     async def action_quit(self) -> None:
         """Quit the application, disconnecting cleanly."""
         try:
+            # Save all active chats to disk
+            from aprs_tui.core.chat_store import save_chat
+            for callsign, chat in self._active_chats.items():
+                msgs = [m.to_dict() for m in chat.messages]
+                save_chat(callsign, msgs)
+
             # Stop beacon
             if self._beacon_manager and self._beacon_manager.enabled:
                 self._beacon_manager.disable()
@@ -588,6 +598,25 @@ class APRSTuiApp(App):
             self._beacon_manager.enable()
             self.notify(f"Beacon ON - every {self._beacon_manager.interval}s")
 
+    def _on_send_ack(self, source: str, msg_id: str) -> None:
+        """Send an ack for a received message. Called from message tracker."""
+        from aprs_tui.protocol.encoder import encode_ack
+
+        info = encode_ack(source, msg_id)
+
+        async def _do_ack():
+            try:
+                await self._send_message_frame(info)
+                self.call_later(
+                    self.notify,
+                    f"Ack sent to {source} for #{msg_id}",
+                    timeout=3,
+                )
+            except Exception as e:
+                logger.error("Failed to send ack: %s", e)
+
+        self.run_worker(_do_ack())
+
     async def _send_message_frame(self, info: str) -> None:
         """Send an APRS message info field as an AX.25 frame via the transport.
 
@@ -633,11 +662,12 @@ class APRSTuiApp(App):
 
     def _open_chat(self, callsign: str) -> None:
         """Open or resume a chat screen with a station."""
-        from aprs_tui.ui.chat_screen import ChatScreen
+        from aprs_tui.ui.chat_screen import ChatScreen, ChatMessage
+        from aprs_tui.core.chat_store import load_chat, save_chat
 
         callsign = callsign.upper()
 
-        # Reuse existing chat - create a new screen with same message history
+        # Reuse in-memory chat if we have one this session
         if callsign in self._active_chats:
             old_chat = self._active_chats[callsign]
             chat = ChatScreen(callsign=callsign, own_callsign=self.callsign)
@@ -649,19 +679,33 @@ class APRSTuiApp(App):
         # Create new chat screen
         chat = ChatScreen(callsign=callsign, own_callsign=self.callsign)
 
-        # Populate with message history from the tracker
+        # Load persisted history from disk
+        stored = load_chat(callsign)
+        if stored:
+            chat.messages = [ChatMessage.from_dict(m) for m in stored]
+
+        # Add any new messages from this session's tracker
+        existing_ids = {m.msg_id for m in chat.messages if m.msg_id}
         for msg in self._message_tracker.history:
-            if msg.addressee.upper() == callsign:
+            if msg.addressee.upper() == callsign and msg.msg_id not in existing_ids:
                 chat.add_message("sent", msg.text, msg.msg_id, msg.state.value)
         for msg in self._message_tracker.inbound_messages:
-            if msg.source.upper() == callsign:
+            if msg.source.upper() == callsign and msg.msg_id not in existing_ids:
                 chat.add_message("received", msg.text, msg.msg_id, "received")
 
         # Sort by timestamp
         chat.messages.sort(key=lambda m: m.timestamp)
 
         self._active_chats[callsign] = chat
-        self.push_screen(chat)
+
+        def _on_chat_dismiss(result) -> None:
+            # Save chat to disk when closed
+            if callsign in self._active_chats:
+                msgs = [m.to_dict() for m in self._active_chats[callsign].messages]
+                save_chat(callsign, msgs)
+                self._refresh_stations()  # Update chat indicators
+
+        self.push_screen(chat, callback=_on_chat_dismiss)
 
     def on_chat_screen_send_chat_message(self, event) -> None:
         """Handle send from a chat screen."""
@@ -824,12 +868,12 @@ class APRSTuiApp(App):
     def _refresh_stations(self) -> None:
         """Refresh station panel, filtering APRS-IS-only stations if hidden."""
         try:
+            from aprs_tui.core.chat_store import list_chat_callsigns
+
             station_panel = self.query_one(StationPanel)
             stations = self._station_tracker.get_stations(sort_by=station_panel.sort_key)
 
             if not self._show_aprs_is:
-                # Filter out stations only heard via APRS-IS
-                # Keep stations that have been heard on RF (non-APRS-IS transport)
                 rf_callsigns = set()
                 stream = self.query_one(StreamPanel)
                 for pkt in stream._all_packets:
@@ -837,7 +881,11 @@ class APRSTuiApp(App):
                         rf_callsigns.add(pkt.source.upper())
                 stations = [s for s in stations if s.callsign.upper() in rf_callsigns]
 
-            station_panel.refresh_stations(stations)
+            # Get callsigns with chat history (on disk + in memory)
+            chat_calls = list_chat_callsigns()
+            chat_calls.update(self._active_chats.keys())
+
+            station_panel.refresh_stations(stations, chat_callsigns=chat_calls)
         except Exception:
             pass
 

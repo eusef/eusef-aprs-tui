@@ -26,6 +26,13 @@ Built for ham radio operators who prefer the command line.
   [#58a6ff]https://mastodon.social/@philj2[/#58a6ff]
   [#58a6ff]https://www.youtube.com/@PhilJohnston[/#58a6ff]
 
+[bold]☕ Support This Project[/bold]
+  If you find APRS TUI useful, consider buying me a coffee!
+  [#58a6ff]https://ko-fi.com/philj2[/#58a6ff]
+
+[bold]🐛 Report a Bug / Request a Feature[/bold]
+  [#58a6ff]https://github.com/eusef/eusef-aprs-tui/issues/new[/#58a6ff]
+
 [bold]License[/bold]
   MIT License - See LICENSE file in repository
 
