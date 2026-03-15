@@ -26,49 +26,39 @@ class ChatMessage:
 class ChatScreen(ModalScreen[None]):
     """Modal chat overlay with a single station. Background activity visible."""
 
-    DEFAULT_CSS = """
+    CSS = """
     ChatScreen {
         align: center middle;
     }
-    #chat-dialog {
+    #chat-outer {
         width: 80;
-        max-width: 90%;
+        max-width: 85%;
         height: 70%;
-        background: #161b22ee;
+        background: #161b22;
         border: solid #58a6ff;
         border-title-color: #58a6ff;
-        padding: 0;
-        layout: vertical;
-    }
-    #chat-header {
-        dock: top;
-        height: 1;
-        background: #1a2233;
-        color: #e6edf3;
         padding: 0 1;
-        text-style: bold;
     }
     #chat-log {
         height: 1fr;
-        padding: 0 1;
+        margin: 0;
+        padding: 0;
         scrollbar-size: 1 1;
     }
     #chat-input {
-        dock: bottom;
         height: 1;
         background: #21262d;
         border: none;
+        margin: 0;
         padding: 0 1;
     }
     #chat-input:focus {
         background: #30363d;
         border: none;
     }
-    #chat-hint {
-        dock: bottom;
+    #chat-footer {
         height: 1;
         color: #484f58;
-        padding: 0 1;
     }
     """
 
@@ -83,20 +73,22 @@ class ChatScreen(ModalScreen[None]):
         self.messages: list[ChatMessage] = []
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="chat-dialog"):
-            yield Static(id="chat-header")
+        with Vertical(id="chat-outer"):
             yield RichLog(id="chat-log", wrap=True, markup=False)
-            yield Static("[dim]Enter=Send  Esc=Close  Messages auto-update[/dim]", id="chat-hint", markup=True)
             yield Input(
-                placeholder=f"Message to {self.peer_callsign}...",
+                placeholder=f"Message to {self.peer_callsign}... (Enter to send)",
                 id="chat-input",
                 max_length=67,
             )
+            yield Static(
+                "[dim]Enter[/dim] Send  [dim]Esc[/dim] Close  "
+                "[dim]j/k[/dim] Scroll  [dim]67 char max[/dim]",
+                id="chat-footer",
+                markup=True,
+            )
 
     def on_mount(self) -> None:
-        self.query_one("#chat-dialog").border_title = f"Chat: {self.peer_callsign}"
-        header = self.query_one("#chat-header", Static)
-        header.update(Text(f" {self.own_callsign} ↔ {self.peer_callsign}", style="bold #58a6ff"))
+        self.query_one("#chat-outer").border_title = f" Chat: {self.own_callsign} ↔ {self.peer_callsign} "
         # Render any pre-loaded history
         for msg in self.messages:
             self._render_message(msg)
