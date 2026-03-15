@@ -13,6 +13,7 @@ Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 """
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 from pathlib import Path
@@ -116,6 +117,9 @@ class APRSTuiApp(App):
         # Command palette (vim-style : to open)
         Binding("colon", "command_palette", ": Command", show=False),
 
+        # Cancel pending message
+        Binding("x", "cancel_message", "x Cancel msg", show=False),
+
         # Compose
         Binding("c", "focus_compose", "c Compose", priority=True),
 
@@ -147,14 +151,17 @@ class APRSTuiApp(App):
         self.packet_bus = PacketBus()
         self._connection_manager: ConnectionManager | None = None
         self._aprs_is_manager: ConnectionManager | None = None
+        self._tx_lock = asyncio.Lock()
         self._station_tracker = StationTracker(
             own_lat=getattr(config.station, "latitude", None),
             own_lon=getattr(config.station, "longitude", None),
         )
         self._message_tracker = MessageTracker(
             own_callsign=self.callsign,
+            send_func=self._send_message_frame,
             on_inbound=self._on_inbound_message,
             on_state_change=self._on_message_state_change,
+            on_retry=self._on_message_retry,
         )
         self._beacon_manager = None  # Created after connection
 
@@ -365,6 +372,22 @@ class APRSTuiApp(App):
         except Exception:
             pass
 
+    def _on_message_retry(self, tracked: TrackedMessage, attempt: int, remaining: int) -> None:
+        """Called every second during retry countdown."""
+        max_retries = self._message_tracker._max_retries
+        info = f"{attempt}/{max_retries} retry in {remaining}s - press x to cancel"
+
+        # Update the message panel inline every second
+        self.call_later(self._ui_update_retry, tracked.msg_id, info)
+
+    def _ui_update_retry(self, msg_id: str, info: str) -> None:
+        """Update retry info on message in panel."""
+        try:
+            panel = self.query_one(MessagePanel)
+            panel.update_retry_info(msg_id, info)
+        except Exception:
+            pass
+
     def _ui_message_state_change(self, tracked: TrackedMessage) -> None:
         """Update message state in panel + notification."""
         try:
@@ -396,12 +419,24 @@ class APRSTuiApp(App):
 
     async def action_quit(self) -> None:
         """Quit the application, disconnecting cleanly."""
-        if self._beacon_manager and self._beacon_manager.enabled:
-            self._beacon_manager.disable()
-        if self._connection_manager:
-            await self._connection_manager.disconnect()
-        if self._aprs_is_manager:
-            await self._aprs_is_manager.disconnect()
+        try:
+            # Stop beacon
+            if self._beacon_manager and self._beacon_manager.enabled:
+                self._beacon_manager.disable()
+
+            # Cancel all message retry tasks
+            self._message_tracker.stop()
+
+            # Disconnect transports with timeout
+            for mgr in (self._connection_manager, self._aprs_is_manager):
+                if mgr:
+                    try:
+                        await asyncio.wait_for(mgr.disconnect(), timeout=3.0)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
+        except Exception:
+            pass
+
         self.exit()
 
     def action_scroll_down(self) -> None:
@@ -496,6 +531,28 @@ class APRSTuiApp(App):
             self._beacon_manager.enable()
             self.notify(f"Beacon ON - every {self._beacon_manager.interval}s")
 
+    async def _send_message_frame(self, info: str) -> None:
+        """Send an APRS message info field as an AX.25 frame via the transport.
+
+        Called by MessageTracker for initial send and retries.
+        Uses a TX lock to prevent simultaneous transmissions.
+        """
+        async with self._tx_lock:
+            if not self._connection_manager or self._connection_manager.state.value != "connected":
+                raise ConnectionError("Not connected")
+
+            from aprs_tui.protocol.ax25 import ax25_encode
+
+            ax25_data = ax25_encode(
+                self.callsign, "APRS",
+                ["WIDE1-1", "WIDE2-1"],
+                info.encode("latin-1"),
+            )
+            await self._connection_manager.send_frame(ax25_data)
+
+            # Wait for radio to release PTT before allowing next TX
+            await asyncio.sleep(2.0)
+
     def _on_beacon_sent(self) -> None:
         """Called when a beacon is transmitted."""
         try:
@@ -540,40 +597,19 @@ class APRSTuiApp(App):
                 self.notify("Enter a message", severity="warning")
                 return
 
-            # Track the message
-            msg_id = self._message_tracker.send_message(to_call, msg_text)
+            # Track the message and start retry loop
+            msg_id = self._message_tracker.send_message(to_call.upper(), msg_text)
 
             # Show in panel
-            panel.add_sent_message(to_call, msg_text, msg_id, state="pending")
+            panel.add_sent_message(to_call.upper(), msg_text, msg_id, state="pending")
             panel.clear_compose()
 
-            # Send via transport if connected
-            if self._connection_manager and self._connection_manager.state.value == "connected":
-                from aprs_tui.protocol.encoder import encode_message
-                from aprs_tui.protocol.ax25 import ax25_encode
+            # Start retry loop (handles initial send + retries via _send_message_frame)
+            async def _start_retries():
+                self._message_tracker.start_retry_loop(msg_id)
 
-                info = encode_message(to_call.upper(), msg_text, msg_id)
-                ax25_data = ax25_encode(
-                    self.callsign, "APRS",
-                    ["WIDE1-1", "WIDE2-1"],
-                    info.encode("latin-1"),
-                )
-
-                # Send raw AX.25 - transport.write_frame() handles KISS framing
-                async def _do_send():
-                    try:
-                        await self._connection_manager.send_frame(ax25_data)
-                        self.call_later(
-                            self.notify, f"Sent to {to_call.upper()}: {msg_text}"
-                        )
-                    except Exception as e:
-                        self.call_later(
-                            self.notify, f"TX failed: {e}", severity="error"
-                        )
-
-                self.run_worker(_do_send())
-            else:
-                self.notify("Message queued (not connected)", severity="warning")
+            self.run_worker(_start_retries())
+            self.notify(f"Sending to {to_call.upper()}: {msg_text}")
 
             # Return focus to stream
             try:
@@ -582,6 +618,21 @@ class APRSTuiApp(App):
                 pass
         except Exception as e:
             self.notify(f"Send failed: {e}", severity="error")
+
+    def action_cancel_message(self) -> None:
+        """Cancel all pending outbound messages."""
+        pending = self._message_tracker.pending_count
+        if pending == 0:
+            self.notify("No pending messages to cancel")
+            return
+
+        cancelled = 0
+        for msg in list(self._message_tracker.history):
+            if msg.state.value == "pending":
+                if self._message_tracker.cancel_message(msg.msg_id):
+                    cancelled += 1
+
+        self.notify(f"Cancelled {cancelled} pending message(s)")
 
     def action_open_filter(self) -> None:
         """Open packet filter (placeholder until full filter input widget)."""

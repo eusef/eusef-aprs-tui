@@ -31,6 +31,7 @@ class DisplayMessage:
     msg_id: str | None = None
     state: str = "received"  # pending, acked, rejected, failed, received
     timestamp: float = field(default_factory=time.monotonic)
+    retry_info: str = ""  # e.g., "2/5, retry in 30s"
 
 
 class MessagePanel(Widget):
@@ -103,6 +104,15 @@ class MessagePanel(Widget):
         for msg in self._messages:
             if msg.msg_id == msg_id:
                 msg.state = new_state
+                msg.retry_info = ""  # Clear retry info on state change
+                break
+        self._refresh_inbox()
+
+    def update_retry_info(self, msg_id: str, info: str) -> None:
+        """Update the retry status display for a pending message."""
+        for msg in self._messages:
+            if msg.msg_id == msg_id:
+                msg.retry_info = info
                 break
         self._refresh_inbox()
 
@@ -123,14 +133,34 @@ class MessagePanel(Widget):
         sym, color = STATE_SYMBOLS.get(msg.state, ("??", "#484f58"))
 
         line = Text()
-        line.append(f"{sym:>2s}", style=f"bold {color}")
-        line.append(f"  {msg.source:<10s}", style="bold white")
+
+        # Status symbol
+        line.append(f" {sym} ", style=f"bold {color}")
+
         if msg.state == "received":
-            line.append(f"  {msg.text}", style="#58a6ff")
+            # Inbound: << FROM: message text
+            line.append(f"{msg.source:<10s} ", style="bold #58a6ff")
+            line.append(msg.text, style="#58a6ff")
         else:
-            line.append(f"  → {msg.destination}: {msg.text}", style=color)
+            # Outbound: >> → DEST: message text
+            line.append(f"→ {msg.destination:<10s} ", style=f"bold {color}")
+            line.append(msg.text, style=color)
+
+        # Message ID
         if msg.msg_id:
-            line.append(f"  {{#{msg.msg_id}}}", style=f"dim {color}")
+            line.append(f"  #{msg.msg_id}", style=f"dim {color}")
+
+        # Retry info for pending messages
+        if msg.retry_info:
+            line.append(f"  [{msg.retry_info}]", style=f"bold {color}")
+
+        # State label for completed messages
+        if msg.state == "acked":
+            line.append("  DELIVERED", style="bold #56d364")
+        elif msg.state == "failed":
+            line.append("  FAILED", style="bold #f85149")
+        elif msg.state == "rejected":
+            line.append("  REJECTED", style="bold #f85149")
 
         inbox.write(line)
 

@@ -63,12 +63,14 @@ class MessageTracker:
         send_func: Callable[[str], Awaitable[None]] | None = None,
         on_state_change: Callable[[TrackedMessage], None] | None = None,
         on_inbound: Callable[[InboundMessage], None] | None = None,
+        on_retry: Callable[[TrackedMessage, int, int], None] | None = None,
     ) -> None:
         self._own_callsign = own_callsign.upper().strip()
         self._max_retries = max_retries
         self._send_func = send_func
         self._on_state_change = on_state_change
         self._on_inbound = on_inbound
+        self._on_retry = on_retry  # callback(tracked, attempt, delay_until_next)
         self._next_id = 1
         self._pending: dict[str, TrackedMessage] = {}
         self._history: list[TrackedMessage] = []
@@ -92,7 +94,10 @@ class MessageTracker:
         return list(self._history)
 
     def send_message(self, addressee: str, text: str) -> str:
-        """Queue a message for sending. Returns the assigned message ID."""
+        """Queue a message for sending. Returns the assigned message ID.
+
+        Call start_retry_loop() after this to begin the retry cycle.
+        """
         msg_id = str(self._next_id)
         self._next_id += 1
 
@@ -100,10 +105,26 @@ class MessageTracker:
         self._pending[msg_id] = tracked
         self._history.append(tracked)
 
-        # Start retry loop
-        self._retry_tasks[msg_id] = asyncio.create_task(self._retry_loop(tracked))
-
         return msg_id
+
+    def start_retry_loop(self, msg_id: str) -> None:
+        """Start the async retry loop for a message. Must be called from async context."""
+        tracked = self._pending.get(msg_id)
+        if tracked:
+            self._retry_tasks[msg_id] = asyncio.create_task(self._retry_loop(tracked))
+
+    def cancel_message(self, msg_id: str) -> bool:
+        """Cancel a pending message. Returns True if cancelled."""
+        if msg_id in self._retry_tasks:
+            self._retry_tasks[msg_id].cancel()
+            del self._retry_tasks[msg_id]
+        if msg_id in self._pending:
+            tracked = self._pending.pop(msg_id)
+            tracked.state = MessageState.FAILED
+            if self._on_state_change:
+                self._on_state_change(tracked)
+            return True
+        return False
 
     def handle_packet(self, pkt: APRSPacket) -> None:
         """Process an incoming packet for ack matching or inbound message filtering."""
@@ -173,19 +194,37 @@ class MessageTracker:
                     return
 
                 tracked.send_count += 1
+                logger.info(
+                    "Message #%s to %s: attempt %d/%d",
+                    tracked.msg_id, tracked.addressee,
+                    tracked.send_count, self._max_retries,
+                )
 
                 if self._send_func:
-                    info = encode_message(tracked.addressee, tracked.text, tracked.msg_id)
-                    await self._send_func(info)
+                    try:
+                        info = encode_message(tracked.addressee, tracked.text, tracked.msg_id)
+                        await self._send_func(info)
+                    except Exception as e:
+                        logger.error("Message send failed: %s", e)
 
+                # Wait before next retry (not after last attempt)
                 if attempt < self._max_retries - 1:
                     delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
-                    await asyncio.sleep(delay)
+
+                    # Countdown with UI updates every second
+                    for remaining in range(delay, 0, -1):
+                        if tracked.state != MessageState.PENDING:
+                            return
+                        if self._on_retry:
+                            self._on_retry(tracked, attempt + 1, remaining)
+                        await asyncio.sleep(1)
 
             # Max retries exhausted
             if tracked.state == MessageState.PENDING:
                 self._pending.pop(tracked.msg_id, None)
                 tracked.state = MessageState.FAILED
+                logger.info("Message #%s to %s: FAILED after %d retries",
+                            tracked.msg_id, tracked.addressee, self._max_retries)
                 if self._on_state_change:
                     self._on_state_change(tracked)
         except asyncio.CancelledError:
