@@ -1,0 +1,171 @@
+"""Chat screen - isolated conversation view with a single station."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import time
+
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.message import Message
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Input, Static, RichLog
+from rich.text import Text
+
+
+@dataclass
+class ChatMessage:
+    """A single message in a conversation."""
+    direction: str  # "sent" or "received"
+    text: str
+    msg_id: str | None = None
+    state: str = ""  # pending, acked, failed, received
+    timestamp: float = field(default_factory=time.time)
+
+
+class ChatScreen(ModalScreen[None]):
+    """Modal chat overlay with a single station. Background activity visible."""
+
+    DEFAULT_CSS = """
+    ChatScreen {
+        align: center middle;
+    }
+    #chat-dialog {
+        width: 80;
+        max-width: 90%;
+        height: 70%;
+        background: #161b22ee;
+        border: solid #58a6ff;
+        border-title-color: #58a6ff;
+        padding: 0;
+        layout: vertical;
+    }
+    #chat-header {
+        dock: top;
+        height: 1;
+        background: #1a2233;
+        color: #e6edf3;
+        padding: 0 1;
+        text-style: bold;
+    }
+    #chat-log {
+        height: 1fr;
+        padding: 0 1;
+        scrollbar-size: 1 1;
+    }
+    #chat-input {
+        dock: bottom;
+        height: 1;
+        background: #21262d;
+        border: none;
+        padding: 0 1;
+    }
+    #chat-input:focus {
+        background: #30363d;
+        border: none;
+    }
+    #chat-hint {
+        dock: bottom;
+        height: 1;
+        color: #484f58;
+        padding: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close_chat", "Close", priority=True),
+    ]
+
+    def __init__(self, callsign: str, own_callsign: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.peer_callsign = callsign.upper()
+        self.own_callsign = own_callsign.upper()
+        self.messages: list[ChatMessage] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="chat-dialog"):
+            yield Static(id="chat-header")
+            yield RichLog(id="chat-log", wrap=True, markup=False)
+            yield Static("[dim]Enter=Send  Esc=Close  Messages auto-update[/dim]", id="chat-hint", markup=True)
+            yield Input(
+                placeholder=f"Message to {self.peer_callsign}...",
+                id="chat-input",
+                max_length=67,
+            )
+
+    def on_mount(self) -> None:
+        self.query_one("#chat-dialog").border_title = f"Chat: {self.peer_callsign}"
+        header = self.query_one("#chat-header", Static)
+        header.update(Text(f" {self.own_callsign} ↔ {self.peer_callsign}", style="bold #58a6ff"))
+        # Render any pre-loaded history
+        for msg in self.messages:
+            self._render_message(msg)
+        self.query_one("#chat-input", Input).focus()
+
+    def add_message(self, direction: str, text: str, msg_id: str | None = None,
+                    state: str = "") -> None:
+        """Add a message to the conversation and render it."""
+        msg = ChatMessage(
+            direction=direction, text=text, msg_id=msg_id, state=state,
+        )
+        self.messages.append(msg)
+        self._render_message(msg)
+
+    def update_message_state(self, msg_id: str, new_state: str) -> None:
+        """Update state of a sent message and re-render."""
+        for msg in self.messages:
+            if msg.msg_id == msg_id:
+                msg.state = new_state
+                break
+        self._rerender()
+
+    def _render_message(self, msg: ChatMessage) -> None:
+        """Render a single chat message."""
+        log = self.query_one("#chat-log", RichLog)
+        line = Text()
+
+        # Timestamp
+        ts = time.strftime("%H:%M", time.localtime(msg.timestamp))
+        line.append(f"{ts} ", style="dim #484f58")
+
+        if msg.direction == "sent":
+            line.append(f"{self.own_callsign} → {self.peer_callsign}", style="bold #e3b341")
+            line.append(f"  {msg.text}", style="#e6edf3")
+            if msg.state == "acked":
+                line.append("  ✓", style="bold #56d364")
+            elif msg.state == "failed":
+                line.append("  ✗", style="bold #f85149")
+            elif msg.state == "pending":
+                line.append("  ⏳", style="#e3b341")
+            if msg.msg_id:
+                line.append(f"  #{msg.msg_id}", style="dim #484f58")
+        else:
+            line.append(f"{self.peer_callsign} → {self.own_callsign}", style="bold #58a6ff")
+            line.append(f"  {msg.text}", style="#e6edf3")
+
+        log.write(line)
+
+    def _rerender(self) -> None:
+        """Re-render all messages."""
+        log = self.query_one("#chat-log", RichLog)
+        log.clear()
+        for msg in self.messages:
+            self._render_message(msg)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Send message on Enter."""
+        if event.input.id == "chat-input" and event.value.strip():
+            text = event.value.strip()
+            event.input.value = ""
+            # Post a message to the app to handle actual sending
+            self.post_message(self.SendChatMessage(self.peer_callsign, text))
+
+    def action_close_chat(self) -> None:
+        self.dismiss(None)
+
+    class SendChatMessage(Message):
+        """Posted when user sends a message from the chat screen."""
+        def __init__(self, callsign: str, text: str) -> None:
+            super().__init__()
+            self.callsign = callsign
+            self.text = text

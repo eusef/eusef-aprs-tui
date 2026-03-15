@@ -15,5 +15,9 @@ else
     source "$VENV_DIR/bin/activate"
 fi
 
+# Kill any lingering instances (prevents stale BLE connections)
+pkill -f "python.*aprs_tui" 2>/dev/null
+sleep 0.5
+
 # Launch TUI (uses default config path, or run wizard if none exists)
 python -m aprs_tui "$@"

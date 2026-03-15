@@ -15,6 +15,7 @@ COMMANDS = [
     ("^W", "Config", "Open setup wizard (all sections)"),
     ("b", "Beacon", "Toggle position beacon on/off"),
     ("c", "Compose", "Compose and send an APRS message"),
+    ("Enter", "Chat", "Open chat with selected station (in station list)"),
     ("r", "Raw", "Toggle raw packet display below decoded lines"),
     ("i", "APRS-IS", "Show/hide APRS-IS packets in stream"),
     ("y", "Copy", "Copy last packet to clipboard"),

@@ -68,45 +68,78 @@ class KissBleTransport(Transport):
         from bleak import BleakClient
 
         self._state = ConnectionState.CONNECTING
-        try:
-            # Use address directly - on macOS this is a CoreBluetooth UUID
-            # (e.g., "F8A81515-6061-CA30-2B45-E33A75516D3E")
-            # On Linux this is a MAC address (e.g., "34:81:F4:F6:0D:9B")
-            addr = self._address
-            logger.info("BLE connecting to: %s", addr)
 
-            self._client = BleakClient(addr)
-            await self._client.connect(timeout=15.0)
+        # Clean up any previous connection first
+        await self._cleanup()
 
-            if not self._client.is_connected:
-                raise ConnectionError("BLE connection failed")
+        max_attempts = 3
+        last_error = None
 
-            # Subscribe to KISS TX notifications (TNC → App)
-            await self._client.start_notify(
-                KISS_TX_CHAR_UUID, self._on_ble_notify
-            )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                addr = self._address
+                logger.info("BLE connecting to %s (attempt %d/%d)", addr, attempt, max_attempts)
 
-            self._state = ConnectionState.CONNECTED
-            self._buffer.clear()
-            while not self._frame_queue.empty():
-                self._frame_queue.get_nowait()
+                # Create a fresh client each attempt
+                self._client = BleakClient(
+                    addr,
+                    disconnected_callback=self._on_disconnect,
+                )
+                await self._client.connect(timeout=15.0)
 
-            logger.info("BLE connected to %s", self.display_name)
+                if not self._client.is_connected:
+                    raise ConnectionError("BLE connection failed")
 
-        except Exception as exc:
-            self._state = ConnectionState.FAILED
-            raise ConnectionError(f"BLE connect failed: {exc}") from exc
+                # Small delay to let BLE stabilize
+                await asyncio.sleep(0.5)
+
+                # Subscribe to KISS TX notifications (TNC → App)
+                await self._client.start_notify(
+                    KISS_TX_CHAR_UUID, self._on_ble_notify
+                )
+
+                self._state = ConnectionState.CONNECTED
+                self._buffer.clear()
+                while not self._frame_queue.empty():
+                    self._frame_queue.get_nowait()
+
+                logger.info("BLE connected to %s", self.display_name)
+                return  # Success
+
+            except Exception as exc:
+                last_error = exc
+                logger.warning("BLE connect attempt %d failed: %s", attempt, exc)
+                await self._cleanup()
+                if attempt < max_attempts:
+                    await asyncio.sleep(2.0)  # Wait before retry
+
+        self._state = ConnectionState.FAILED
+        raise ConnectionError(f"BLE connect failed after {max_attempts} attempts: {last_error}")
+
+    def _on_disconnect(self, client) -> None:
+        """Called by bleak when BLE connection drops."""
+        logger.warning("BLE disconnected (callback)")
+        self._state = ConnectionState.DISCONNECTED
+
+    async def _cleanup(self) -> None:
+        """Clean up any existing BLE connection."""
+        if self._client:
+            try:
+                if self._client.is_connected:
+                    try:
+                        await self._client.stop_notify(KISS_TX_CHAR_UUID)
+                    except Exception:
+                        pass
+                    try:
+                        await asyncio.wait_for(self._client.disconnect(), timeout=3.0)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            self._client = None
 
     async def disconnect(self) -> None:
-        if self._client and self._client.is_connected:
-            try:
-                await self._client.stop_notify(KISS_TX_CHAR_UUID)
-            except Exception:
-                pass
-            try:
-                await self._client.disconnect()
-            except Exception:
-                pass
+        await self._cleanup()
         self._client = None
         self._state = ConnectionState.DISCONNECTED
         logger.info("BLE disconnected")

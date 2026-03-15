@@ -149,6 +149,7 @@ class APRSTuiApp(App):
         self._aprs_is_manager: ConnectionManager | None = None
         self._tx_lock = asyncio.Lock()
         self._show_aprs_is = True
+        self._active_chats: dict[str, 'ChatScreen'] = {}  # callsign -> screen
         self._station_tracker = StationTracker(
             own_lat=getattr(config.station, "latitude", None),
             own_lon=getattr(config.station, "longitude", None),
@@ -173,8 +174,12 @@ class APRSTuiApp(App):
     def on_mount(self) -> None:
         self.title = "APRS-TUI"
         self.sub_title = self.callsign
-        # Start connection in background
-        self.run_worker(self._connect(), exclusive=True)
+        # Start primary connection in background
+        self.run_worker(self._connect(), exclusive=True, group="primary")
+        # Start APRS-IS independently (don't wait for primary)
+        if (self.config.aprs_is.enabled
+                and self.config.server.protocol != "aprs-is"):
+            self.run_worker(self._connect_aprs_is(), group="aprs-is")
 
     async def _connect(self) -> None:
         """Set up transport and connection manager, then start reading."""
@@ -246,10 +251,7 @@ class APRSTuiApp(App):
         except Exception:
             status_bar.update_state(ConnectionState.FAILED, transport.display_name)
 
-        # Start APRS-IS as secondary connection if enabled and primary isn't already APRS-IS
-        if (self.config.aprs_is.enabled
-                and self.config.server.protocol != "aprs-is"):
-            self.run_worker(self._connect_aprs_is())
+        # APRS-IS is started independently from on_mount, not here
 
     async def _connect_aprs_is(self) -> None:
         """Connect to APRS-IS as a secondary transport."""
@@ -365,11 +367,21 @@ class APRSTuiApp(App):
         self.call_later(self._ui_message_state_change, tracked)
 
     def _ui_inbound_message(self, msg: InboundMessage) -> None:
-        """Show inbound message in panel + notification."""
+        """Show inbound message in panel + notification, route to chat if open."""
         try:
             panel = self.query_one(MessagePanel)
             panel.add_received_message(msg.source, msg.text, msg.msg_id)
-            self.notify(f"Message from {msg.source}: {msg.text}")
+
+            # Route to active chat screen if open
+            source = msg.source.upper()
+            if source in self._active_chats:
+                chat = self._active_chats[source]
+                chat.add_message("received", msg.text, msg.msg_id, state="received")
+
+            # Notify with option to open chat
+            self.notify(
+                f"Message from {msg.source}: {msg.text}  (Tab to stations, Enter to chat)",
+            )
             self.bell()
         except Exception:
             pass
@@ -411,6 +423,13 @@ class APRSTuiApp(App):
                 self.notify(
                     f"Message to {tracked.addressee} failed after retries",
                     severity="error",
+                )
+
+            # Route to active chat screen
+            addr = tracked.addressee.upper()
+            if addr in self._active_chats:
+                self._active_chats[addr].update_message_state(
+                    tracked.msg_id, tracked.state.value
                 )
         except Exception:
             pass
@@ -609,17 +628,66 @@ class APRSTuiApp(App):
             pass
 
     def on_station_panel_station_activated(self, event: StationPanel.StationActivated) -> None:
-        """Open compose with selected station's callsign pre-filled."""
+        """Open a chat screen with the selected station."""
+        self._open_chat(event.callsign)
+
+    def _open_chat(self, callsign: str) -> None:
+        """Open or resume a chat screen with a station."""
+        from aprs_tui.ui.chat_screen import ChatScreen
+
+        callsign = callsign.upper()
+
+        # Reuse existing chat - create a new screen with same message history
+        if callsign in self._active_chats:
+            old_chat = self._active_chats[callsign]
+            chat = ChatScreen(callsign=callsign, own_callsign=self.callsign)
+            chat.messages = old_chat.messages
+            self._active_chats[callsign] = chat
+            self.push_screen(chat)
+            return
+
+        # Create new chat screen
+        chat = ChatScreen(callsign=callsign, own_callsign=self.callsign)
+
+        # Populate with message history from the tracker
+        for msg in self._message_tracker.history:
+            if msg.addressee.upper() == callsign:
+                chat.add_message("sent", msg.text, msg.msg_id, msg.state.value)
+        for msg in self._message_tracker.inbound_messages:
+            if msg.source.upper() == callsign:
+                chat.add_message("received", msg.text, msg.msg_id, "received")
+
+        # Sort by timestamp
+        chat.messages.sort(key=lambda m: m.timestamp)
+
+        self._active_chats[callsign] = chat
+        self.push_screen(chat)
+
+    def on_chat_screen_send_chat_message(self, event) -> None:
+        """Handle send from a chat screen."""
+        callsign = event.callsign.upper()
+        text = event.text
+
+        # Send through message tracker
+        msg_id = self._message_tracker.send_message(callsign, text)
+
+        # Add to chat screen
+        if callsign in self._active_chats:
+            self._active_chats[callsign].add_message(
+                "sent", text, msg_id, state="pending"
+            )
+
+        # Add to message panel too
         try:
             panel = self.query_one(MessagePanel)
-            to_input = panel.query_one("#msg-to-input", Input)
-            to_input.value = event.callsign
-            msg_input = panel.query_one("#msg-text-input", Input)
-            msg_input.focus()
-            panel.scroll_visible()
-            self.notify(f"Composing message to {event.callsign}")
+            panel.add_sent_message(callsign, text, msg_id, state="pending")
         except Exception:
             pass
+
+        # Start retry loop
+        async def _start():
+            self._message_tracker.start_retry_loop(msg_id)
+        self.run_worker(_start())
 
     def action_focus_compose(self) -> None:
         """Focus the message compose To: input and scroll it into view."""

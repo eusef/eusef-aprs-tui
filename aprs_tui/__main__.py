@@ -83,7 +83,22 @@ def main() -> None:
     from aprs_tui.app import APRSTuiApp
 
     app = APRSTuiApp(config, config_path=config_path)
-    app.run()
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Ensure BLE cleanup on any exit
+        import asyncio
+        try:
+            if app._connection_manager:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(
+                    asyncio.wait_for(app._connection_manager.disconnect(), timeout=3.0)
+                )
+                loop.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
