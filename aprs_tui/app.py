@@ -42,43 +42,53 @@ class APRSCommandProvider(Provider):
     """Custom command provider for APRS TUI."""
 
     async def search(self, query: str) -> Hits:
-        commands = {
-            "config": "Open full configuration wizard",
-            "config server": "Configure server connection",
-            "config station": "Configure station identity",
-            "config beacon": "Configure beacon settings",
-            "config aprs-is": "Configure APRS-IS gateway",
-            "connect": "Reconnect to server",
-            "disconnect": "Disconnect from server",
-            "beacon on": "Enable beaconing",
-            "beacon off": "Disable beaconing",
-            "quit": "Exit the application",
-        }
+        matcher = self.matcher(query)
 
-        query_lower = query.lower()
-        for cmd, description in commands.items():
-            if query_lower in cmd or query_lower in description.lower():
+        commands = [
+            ("Config: Full wizard", "config_all"),
+            ("Config: Server connection", "config_server"),
+            ("Config: Station identity", "config_station"),
+            ("Config: Beacon settings", "config_beacon"),
+            ("Config: APRS-IS gateway", "config_aprs_is"),
+            ("Reconnect to server", "reconnect"),
+            ("Disconnect from server", "disconnect"),
+            ("Toggle beacon on/off", "beacon"),
+            ("Toggle raw packet display", "raw"),
+            ("Quit application", "quit"),
+        ]
+
+        for label, action_id in commands:
+            score = matcher.match(label)
+            if score > 0:
                 yield Hit(
-                    score=1.0 if cmd.startswith(query_lower) else 0.5,
-                    match_display=cmd,
-                    command=self._make_command(cmd),
-                    text=description,
+                    score=score,
+                    match_display=matcher.highlight(label),
+                    command=self._run_action(action_id),
+                    help=label,
                 )
 
-    def _make_command(self, cmd: str):
-        async def run_command():
+    def _run_action(self, action_id: str):
+        async def callback():
             app = self.app
-            if cmd == "quit":
+            if action_id == "quit":
                 await app.action_quit()
-            elif cmd == "connect":
+            elif action_id == "reconnect":
                 app.run_worker(app._connect(), exclusive=True)
-            elif cmd == "disconnect":
+            elif action_id == "disconnect":
                 if app._connection_manager:
                     await app._connection_manager.disconnect()
-            elif cmd.startswith("config"):
-                section = cmd.replace("config", "").strip() or "all"
+            elif action_id == "beacon":
+                app.action_toggle_beacon()
+            elif action_id == "raw":
+                app.action_toggle_raw()
+            elif action_id.startswith("config_"):
+                section = action_id.replace("config_", "")
+                if section == "all":
+                    section = "all"
+                elif section == "aprs_is":
+                    section = "aprs-is"
                 await app.action_config(section)
-        return run_command
+        return callback
 
 
 class APRSTuiApp(App):
@@ -92,7 +102,7 @@ class APRSTuiApp(App):
         # Global (priority=True so they work everywhere)
         Binding("q", "quit", "q Quit", priority=True),
         Binding("question_mark", "toggle_help", "? Help", priority=True),
-        Binding("ctrl+w", "config('server')", "^W Config", priority=True),
+        Binding("ctrl+w", "config('all')", "^W Config", priority=True),
         Binding("b", "toggle_beacon", "b Beacon", priority=True),
 
         # Navigation
@@ -136,6 +146,7 @@ class APRSTuiApp(App):
         self.callsign = f"{config.station.callsign}-{config.station.ssid}"
         self.packet_bus = PacketBus()
         self._connection_manager: ConnectionManager | None = None
+        self._aprs_is_manager: ConnectionManager | None = None
         self._station_tracker = StationTracker(
             own_lat=getattr(config.station, "latitude", None),
             own_lon=getattr(config.station, "longitude", None),
@@ -230,6 +241,64 @@ class APRSTuiApp(App):
                 self._beacon_manager.enable()
         except Exception:
             status_bar.update_state(ConnectionState.FAILED, transport.display_name)
+
+        # Start APRS-IS as secondary connection if enabled and primary isn't already APRS-IS
+        if (self.config.aprs_is.enabled
+                and self.config.server.protocol != "aprs-is"):
+            self.run_worker(self._connect_aprs_is())
+
+    async def _connect_aprs_is(self) -> None:
+        """Connect to APRS-IS as a secondary transport."""
+        from aprs_tui.transport.aprs_is import AprsIsTransport
+        from aprs_tui.core.dedup import DeduplicationFilter
+
+        aprs_is_transport = AprsIsTransport(
+            host=self.config.aprs_is.host,
+            port=self.config.aprs_is.port,
+            callsign=self.config.station.callsign,
+            passcode=self.config.aprs_is.passcode,
+            filter_str=self.config.aprs_is.filter,
+        )
+
+        # Dedup filter to avoid showing same packet from radio + APRS-IS
+        self._dedup = DeduplicationFilter(window=30.0)
+
+        self._aprs_is_manager = ConnectionManager(
+            aprs_is_transport,
+            reconnect_interval=self.config.connection.reconnect_interval,
+            max_reconnect_attempts=self.config.connection.max_reconnect_attempts,
+            health_timeout=300,  # APRS-IS is chattier, longer health timeout
+            on_state_change=self._on_aprs_is_state_change,
+            on_packet=self._on_aprs_is_packet,
+        )
+
+        try:
+            await self._aprs_is_manager.connect()
+            self.call_later(
+                self.notify,
+                f"APRS-IS connected: {aprs_is_transport.display_name}",
+            )
+        except Exception:
+            self.call_later(
+                self.notify,
+                "APRS-IS connection failed",
+                severity="warning",
+            )
+
+    def _on_aprs_is_state_change(self, state: ConnectionState) -> None:
+        """Handle APRS-IS connection state changes."""
+        pass  # Primary status bar shows radio; APRS-IS is secondary
+
+    def _on_aprs_is_packet(self, pkt: APRSPacket) -> None:
+        """Handle packets from APRS-IS (secondary transport)."""
+        # Dedup: skip if we already got this packet from radio
+        if hasattr(self, '_dedup') and self._dedup.is_duplicate(pkt):
+            return
+
+        self.packet_bus.publish(pkt)
+        self._station_tracker.update(pkt)
+        self._message_tracker.handle_packet(pkt)
+        self.call_later(self._ui_update_packet, pkt)
 
     def _on_state_change(self, state: ConnectionState) -> None:
         """Handle connection state changes (called from ConnectionManager)."""
@@ -327,8 +396,12 @@ class APRSTuiApp(App):
 
     async def action_quit(self) -> None:
         """Quit the application, disconnecting cleanly."""
+        if self._beacon_manager and self._beacon_manager.enabled:
+            self._beacon_manager.disable()
         if self._connection_manager:
             await self._connection_manager.disconnect()
+        if self._aprs_is_manager:
+            await self._aprs_is_manager.disconnect()
         self.exit()
 
     def action_scroll_down(self) -> None:
@@ -359,11 +432,19 @@ class APRSTuiApp(App):
         if config_path:
             cmd.extend(["--config", str(config_path)])
 
+        # Disconnect before suspending so BLE/serial is released
+        if self._beacon_manager and self._beacon_manager.enabled:
+            self._beacon_manager.disable()
+        if self._connection_manager:
+            await self._connection_manager.disconnect()
+        if self._aprs_is_manager:
+            await self._aprs_is_manager.disconnect()
+
         # Update status bar
         status_bar = self.query_one(StatusBar)
         status_bar.connection_state = "WIZARD"
 
-        async with self.suspend():
+        with self.suspend():
             subprocess.run(cmd, check=False)
 
         # Resume: reload config and reconnect
@@ -387,21 +468,17 @@ class APRSTuiApp(App):
         status_bar = self.query_one(StatusBar)
         status_bar.callsign = self.callsign
 
-        # Check if server config changed - reconnect if so
-        server_changed = (
-            old_config.server.host != new_config.server.host
-            or old_config.server.port != new_config.server.port
-            or old_config.server.protocol != new_config.server.protocol
-        )
-
-        if server_changed:
-            # Disconnect old connection
-            if self._connection_manager:
+        # Always reconnect after wizard (we disconnected before suspend)
+        if self._connection_manager:
+            try:
                 await self._connection_manager.disconnect()
-            # Reconnect with new config
-            self.run_worker(self._connect(), exclusive=True)
+            except Exception:
+                pass
+        self._connection_manager = None
+        self._beacon_manager = None
+        self.run_worker(self._connect(), exclusive=True)
 
-        self.notify("Configuration reloaded")
+        self.notify("Configuration reloaded - reconnecting...")
 
     def action_toggle_beacon(self) -> None:
         """Toggle position beacon on/off."""

@@ -71,7 +71,7 @@ class StreamPanel(RichLog):
             line = self._format_packet(pkt)
             self.write(line)
             if self._show_raw:
-                raw_text = Text(f"  RAW: {pkt.raw}", style="dim #484f58")
+                raw_text = Text(f"  RAW: {pkt.raw}", style="italic #8b949e")
                 self.write(raw_text)
 
     def _passes_filter(self, pkt: APRSPacket) -> bool:
@@ -97,7 +97,7 @@ class StreamPanel(RichLog):
                 self._packet_count += 1
                 self.write(self._format_packet(pkt))
                 if self._show_raw:
-                    raw_text = Text(f"  RAW: {pkt.raw}", style="dim #484f58")
+                    raw_text = Text(f"  RAW: {pkt.raw}", style="italic #8b949e")
                     self.write(raw_text)
 
         # Update border title with filter indicator
@@ -126,7 +126,7 @@ class StreamPanel(RichLog):
                 self._packet_count += 1
                 self.write(self._format_packet(pkt))
                 if self._show_raw:
-                    raw_text = Text(f"  RAW: {pkt.raw}", style="dim #484f58")
+                    raw_text = Text(f"  RAW: {pkt.raw}", style="italic #8b949e")
                     self.write(raw_text)
 
     def _format_packet(self, pkt: APRSPacket) -> Text:

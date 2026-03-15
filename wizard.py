@@ -140,54 +140,68 @@ def _step_ble_setup(plat: dict) -> tuple[str | None, int]:
     console.print("[dim]The TNC4 uses Bluetooth Low Energy (BLE) for KISS data.[/dim]")
     console.print("[dim]Make sure your TNC4 is powered on and NOT connected to the phone app.[/dim]\n")
 
-    # Try scanning for BLE devices
-    scan = questionary.confirm("Scan for BLE TNC devices? (10 seconds)", default=True).ask()
-    if scan is None:
-        raise KeyboardInterrupt
-
+    # Scan loop - allow re-scanning
     device_address = None
-    if scan:
-        console.print("  Scanning for BLE devices...")
-        try:
-            import asyncio
-            from aprs_tui.transport.kiss_ble import scan_for_tnc
-
-            loop = asyncio.new_event_loop()
-            devices = loop.run_until_complete(scan_for_tnc(timeout=10.0))
-            loop.close()
-
-            if devices:
-                console.print(f"  [green]Found {len(devices)} TNC device(s):[/green]")
-                choices = []
-                for d in devices:
-                    choices.append(questionary.Choice(
-                        f"{d['name']} ({d['address']})", value=d['address']
-                    ))
-                choices.append(questionary.Choice("Enter manually", value="__manual__"))
-
-                selected = questionary.select("Select your TNC:", choices=choices).ask()
-                if selected is None:
-                    raise KeyboardInterrupt
-                if selected != "__manual__":
-                    device_address = selected
-            else:
-                console.print("  [yellow]No BLE TNC devices found.[/yellow]")
-                console.print("  [dim]Make sure the TNC4 is powered on and not connected to another app.[/dim]")
-        except ImportError:
-            console.print("  [yellow]BLE scanning requires 'bleak' library.[/yellow]")
-        except Exception as e:
-            console.print(f"  [yellow]BLE scan error: {e}[/yellow]")
-
-    if device_address is None:
-        # Manual entry - accept name or MAC address
-        console.print("\n  [dim]Enter the TNC name (e.g., 'TNC4 Mobilinkd') or MAC address.[/dim]")
-        console.print("  [dim]You can find the MAC in System Settings > Bluetooth > TNC4 > info[/dim]")
-        device_address = questionary.text(
-            "BLE device name or address:",
-            default="TNC4 Mobilinkd",
-        ).ask()
-        if device_address is None:
+    while device_address is None:
+        scan = questionary.confirm("Scan for BLE TNC devices? (10 seconds)", default=True).ask()
+        if scan is None:
             raise KeyboardInterrupt
+
+        if scan:
+            console.print("  Scanning for BLE devices...")
+            try:
+                import asyncio
+                from aprs_tui.transport.kiss_ble import scan_for_tnc
+
+                loop = asyncio.new_event_loop()
+                devices = loop.run_until_complete(scan_for_tnc(timeout=10.0))
+                loop.close()
+
+                if devices:
+                    console.print(f"  [green]Found {len(devices)} TNC device(s):[/green]")
+                    choices = []
+                    for d in devices:
+                        choices.append(questionary.Choice(
+                            f"{d['name']} ({d['address']})", value=d['address']
+                        ))
+                    choices.append(questionary.Choice("Scan again", value="__rescan__"))
+                    choices.append(questionary.Choice("Enter manually", value="__manual__"))
+
+                    selected = questionary.select("Select your TNC:", choices=choices).ask()
+                    if selected is None:
+                        raise KeyboardInterrupt
+                    if selected == "__rescan__":
+                        continue
+                    elif selected != "__manual__":
+                        device_address = selected
+                        break
+                else:
+                    console.print("  [yellow]No BLE TNC devices found.[/yellow]")
+                    console.print("  [dim]Make sure the TNC4 is powered on and not connected to another app.[/dim]\n")
+                    action = questionary.select(
+                        "What would you like to do?",
+                        choices=["Scan again", "Enter manually"],
+                    ).ask()
+                    if action is None:
+                        raise KeyboardInterrupt
+                    if action == "Scan again":
+                        continue
+            except ImportError:
+                console.print("  [yellow]BLE scanning requires 'bleak' library.[/yellow]")
+            except Exception as e:
+                console.print(f"  [yellow]BLE scan error: {e}[/yellow]")
+
+        # Manual entry fallback
+        if device_address is None and not scan:
+            console.print("\n  [dim]Enter the TNC name (e.g., 'TNC4 Mobilinkd') or BLE UUID.[/dim]")
+            console.print("  [dim]You can find the UUID by running: python scripts/test-mobilinkd-ble.py[/dim]")
+            entry = questionary.text(
+                "BLE device name or address:",
+                default="TNC4 Mobilinkd",
+            ).ask()
+            if entry is None:
+                raise KeyboardInterrupt
+            device_address = entry
 
     console.print(f"\n  [green]\u2713[/green] Will connect via BLE to: {device_address}")
     # Return address and 0 (port unused for BLE)
@@ -615,6 +629,8 @@ def step_beacon(config: AppConfig) -> AppConfig:
 def step_aprs_is(config: AppConfig) -> AppConfig:
     """Configure APRS-IS gateway."""
     console.print("\n[bold]APRS-IS Internet Gateway[/bold]")
+    console.print("[dim]APRS-IS streams live APRS packets from the internet.[/dim]")
+    console.print("[dim]Can run alongside radio (dual mode) or standalone.[/dim]\n")
 
     enabled = questionary.confirm(
         "Connect to APRS-IS?", default=config.aprs_is.enabled
@@ -633,7 +649,8 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
     if port_str is None:
         raise KeyboardInterrupt
 
-    console.print("\n  [dim]Leave passcode blank for receive-only mode.[/dim]")
+    console.print("\n  [dim]Passcode is required for transmitting via APRS-IS.[/dim]")
+    console.print("  [dim]For receive-only, enter -1.[/dim]")
     console.print("  [dim]Passcode generator: https://apps.magicbug.co.uk/passcode/[/dim]")
 
     passcode_str = questionary.text(
@@ -642,11 +659,81 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
     if passcode_str is None:
         raise KeyboardInterrupt
 
-    filter_str = (
-        questionary.text("Filter (blank=none):", default=config.aprs_is.filter).ask() or ""
-    )
+    # --- Filter configuration ---
+    console.print("\n[bold]APRS-IS Filter[/bold]")
+    console.print("[dim]A filter tells the server what packets to send you.[/dim]")
+    console.print("[dim]Without a filter, you may receive no packets.[/dim]\n")
 
-    console.print("\n  [dim]Example filters: r/45.4/-122.6/100  b/W7XXX*  t/m[/dim]")
+    # Auto-generate default filter from beacon position
+    default_filter = config.aprs_is.filter
+    if not default_filter and config.beacon.latitude != 0.0:
+        lat = config.beacon.latitude
+        lon = config.beacon.longitude
+        default_filter = f"r/{lat}/{lon}/100"
+        console.print(f"  [green]Auto-generated from your beacon position:[/green] {default_filter}")
+
+    filter_choice = questionary.select(
+        "How would you like to set the filter?",
+        choices=[
+            questionary.Choice(
+                f"Radius from my position (100km)",
+                value="radius_100",
+            ),
+            questionary.Choice(
+                f"Radius from my position (200km)",
+                value="radius_200",
+            ),
+            questionary.Choice(
+                f"Radius from my position (500km)",
+                value="radius_500",
+            ),
+            questionary.Choice(
+                f"Only my callsign traffic",
+                value="mycall",
+            ),
+            questionary.Choice(
+                "Messages only",
+                value="messages",
+            ),
+            questionary.Choice(
+                "Enter custom filter",
+                value="custom",
+            ),
+        ],
+    ).ask()
+    if filter_choice is None:
+        raise KeyboardInterrupt
+
+    lat = config.beacon.latitude
+    lon = config.beacon.longitude
+    callsign = config.station.callsign
+
+    if filter_choice == "radius_100":
+        filter_str = f"r/{lat}/{lon}/100"
+    elif filter_choice == "radius_200":
+        filter_str = f"r/{lat}/{lon}/200"
+    elif filter_choice == "radius_500":
+        filter_str = f"r/{lat}/{lon}/500"
+    elif filter_choice == "mycall":
+        filter_str = f"b/{callsign}*"
+    elif filter_choice == "messages":
+        filter_str = "t/m"
+    else:
+        console.print("\n  [dim]Filter syntax examples:[/dim]")
+        console.print("  [dim]  r/45.5/-122.2/100  Radius 100km from coordinates[/dim]")
+        console.print("  [dim]  b/W7PDJ*           Only your callsign traffic[/dim]")
+        console.print("  [dim]  t/m                Messages only[/dim]")
+        console.print("  [dim]  t/poimqstunw       All packet types[/dim]")
+        console.print("  [dim]  r/45/-122/200 t/m  Combine: radius + messages[/dim]")
+        filter_str = questionary.text(
+            "Enter APRS-IS filter:", default=default_filter
+        ).ask() or ""
+
+    if lat == 0.0 and lon == 0.0 and filter_choice.startswith("radius"):
+        console.print("\n  [yellow]Warning: Your position is 0,0. Set your position in beacon config first.[/yellow]")
+        console.print("  [dim]The radius filter won't work correctly without a valid position.[/dim]")
+
+    console.print(f"\n  Filter: [bold]{filter_str}[/bold]")
 
     return config.model_copy(
         update={
