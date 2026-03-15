@@ -107,7 +107,7 @@ class APRSTuiApp(App):
         Binding("colon", "command_palette", ": Command", show=False),
 
         # Compose
-        Binding("c", "focus_compose", "c Compose", show=False),
+        Binding("c", "focus_compose", "c Compose", priority=True),
 
         # Packet filter
         Binding("slash", "open_filter", "/ Filter", show=False),
@@ -352,13 +352,82 @@ class APRSTuiApp(App):
         self.notify("Beacon toggle not yet connected")
 
     def action_focus_compose(self) -> None:
-        """Focus the message compose To: input."""
+        """Focus the message compose To: input and scroll it into view."""
         try:
             panel = self.query_one(MessagePanel)
             to_input = panel.query_one("#msg-to-input", Input)
             to_input.focus()
+            panel.scroll_visible()
         except Exception:
             pass
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter pressed in an Input widget."""
+        if event.input.id == "msg-text-input":
+            self._send_message()
+        elif event.input.id == "msg-to-input":
+            # Tab to message field on Enter in To: field
+            try:
+                msg_input = self.query_one("#msg-text-input", Input)
+                msg_input.focus()
+            except Exception:
+                pass
+
+    def _send_message(self) -> None:
+        """Send the composed message."""
+        try:
+            panel = self.query_one(MessagePanel)
+            to_call, msg_text = panel.get_compose_values()
+
+            if not to_call:
+                self.notify("Enter a destination callsign", severity="warning")
+                return
+            if not msg_text:
+                self.notify("Enter a message", severity="warning")
+                return
+
+            # Track the message
+            msg_id = self._message_tracker.send_message(to_call, msg_text)
+
+            # Show in panel
+            panel.add_sent_message(to_call, msg_text, msg_id, state="pending")
+            panel.clear_compose()
+
+            # Send via transport if connected
+            if self._connection_manager and self._connection_manager.state.value == "connected":
+                from aprs_tui.protocol.encoder import encode_message
+                from aprs_tui.protocol.ax25 import ax25_encode
+
+                info = encode_message(to_call.upper(), msg_text, msg_id)
+                ax25_data = ax25_encode(
+                    self.callsign, "APRS",
+                    ["WIDE1-1", "WIDE2-1"],
+                    info.encode("latin-1"),
+                )
+
+                # Send raw AX.25 - transport.write_frame() handles KISS framing
+                async def _do_send():
+                    try:
+                        await self._connection_manager.send_frame(ax25_data)
+                        self.call_later(
+                            self.notify, f"Sent to {to_call.upper()}: {msg_text}"
+                        )
+                    except Exception as e:
+                        self.call_later(
+                            self.notify, f"TX failed: {e}", severity="error"
+                        )
+
+                self.run_worker(_do_send())
+            else:
+                self.notify("Message queued (not connected)", severity="warning")
+
+            # Return focus to stream
+            try:
+                self.query_one(StreamPanel).focus()
+            except Exception:
+                pass
+        except Exception as e:
+            self.notify(f"Send failed: {e}", severity="error")
 
     def action_open_filter(self) -> None:
         """Open packet filter (placeholder until full filter input widget)."""

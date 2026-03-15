@@ -1,10 +1,11 @@
 Screen {
     background: #0d1117;
     color: #e6edf3;
+    layout: vertical;
 }
 
 #main-panels {
-    height: 1fr;
+    height: 3fr;
     layout: horizontal;
 }
 
@@ -31,9 +32,14 @@ Screen {
 }
 
 #message-panel {
-    height: auto;
-    max-height: 12;
-    min-height: 6;
+    height: 10;
+    border: solid #30363d;
+    border-title-color: #8b949e;
+}
+
+#message-panel:focus-within {
+    border: double #58a6ff;
+    border-title-color: #58a6ff;
 }
 
 StatusBar {

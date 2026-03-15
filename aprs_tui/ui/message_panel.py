@@ -38,7 +38,8 @@ class MessagePanel(Widget):
 
     DEFAULT_CSS = """
     MessagePanel {
-        height: 1fr;
+        height: auto;
+        max-height: 12;
         border: solid #30363d;
         border-title-color: #8b949e;
         layout: vertical;
@@ -49,29 +50,16 @@ class MessagePanel(Widget):
     }
     #msg-inbox {
         height: 1fr;
-        min-height: 3;
-    }
-    #msg-compose {
-        height: auto;
-        max-height: 5;
-        padding: 0 1;
+        min-height: 2;
+        max-height: 6;
     }
     #msg-to-input {
         width: 100%;
+        margin: 0 0;
     }
     #msg-text-input {
         width: 100%;
-    }
-    .msg-label {
-        height: 1;
-        padding: 0 1;
-        color: #8b949e;
-    }
-    .msg-counter {
-        height: 1;
-        padding: 0 1;
-        color: #8b949e;
-        text-align: right;
+        margin: 0 0;
     }
     """
 
@@ -87,11 +75,8 @@ class MessagePanel(Widget):
 
     def compose(self) -> ComposeResult:
         yield RichLog(id="msg-inbox", wrap=True, markup=False)
-        with Vertical(id="msg-compose"):
-            yield Static("To:", classes="msg-label")
-            yield Input(placeholder="Callsign", id="msg-to-input", max_length=9)
-            yield Static("Msg:", classes="msg-label")
-            yield Input(placeholder="Message (67 chars max)", id="msg-text-input", max_length=67)
+        yield Input(placeholder="To: callsign", id="msg-to-input", max_length=9)
+        yield Input(placeholder="Msg: (67 chars max) Enter to send", id="msg-text-input", max_length=67)
 
     def add_received_message(self, source: str, text: str, msg_id: str | None = None) -> None:
         """Add an inbound message to the inbox."""

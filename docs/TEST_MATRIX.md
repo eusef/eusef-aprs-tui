@@ -125,3 +125,7 @@
 - **First BLE connection**: macOS shows a "Connection Request from: TNC4 Mobilinkd" popup. Click **"Connect"** to allow. Do NOT check "Ignore this device". This only appears once per device.
 - **BLE pairing**: After clicking Connect, macOS remembers the pairing. Subsequent connections are automatic.
 - **Bluetooth permissions**: macOS may also ask for Bluetooth permission for Terminal/iTerm2. Allow it in System Settings > Privacy & Security > Bluetooth.
+
+## Radio Configuration Notes
+
+- **Yaesu VX-6 / VX-8 with Mobilinkd**: Set **"Busy Lock Out" to OFF** in the radio menu. When enabled, Busy Lock Out prevents the TNC from keying the transmitter if the channel is busy, which can silently block all TX.
