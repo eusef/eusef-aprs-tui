@@ -88,7 +88,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        # Ensure BLE cleanup on any exit
+        # Ensure cleanup on any exit
         import asyncio
         try:
             if app._connection_manager:
@@ -97,6 +97,12 @@ def main() -> None:
                     asyncio.wait_for(app._connection_manager.disconnect(), timeout=3.0)
                 )
                 loop.close()
+        except Exception:
+            pass
+        # Stop managed Direwolf
+        try:
+            if app._direwolf_manager and app._direwolf_manager.is_running:
+                app._direwolf_manager.stop()
         except Exception:
             pass
 

@@ -154,8 +154,8 @@ class APRSTuiApp(App):
         self._show_aprs_is = True
         self._active_chats: dict[str, 'ChatScreen'] = {}  # callsign -> screen
         self._station_tracker = StationTracker(
-            own_lat=getattr(config.station, "latitude", None),
-            own_lon=getattr(config.station, "longitude", None),
+            own_lat=config.station.latitude or None,
+            own_lon=config.station.longitude or None,
         )
         self._message_tracker = MessageTracker(
             own_callsign=self.callsign,
@@ -166,6 +166,7 @@ class APRSTuiApp(App):
             on_send_ack=self._on_send_ack,
         )
         self._beacon_manager = None  # Created after connection
+        self._direwolf_manager = None  # Managed Direwolf subprocess
 
     def compose(self) -> ComposeResult:
         yield StatusBar(self.callsign)
@@ -190,6 +191,9 @@ class APRSTuiApp(App):
         protocol = self.config.server.protocol
 
         if protocol == "kiss-tcp":
+            # Start managed Direwolf if local config exists
+            await self._maybe_start_direwolf()
+
             transport = KissTcpTransport(
                 self.config.server.host,
                 self.config.server.port,
@@ -238,10 +242,12 @@ class APRSTuiApp(App):
 
             # Create beacon manager now that we have a transport
             from aprs_tui.core.beacon import BeaconManager
+            bcn_lat = self.config.beacon.latitude if self.config.beacon.latitude != 0.0 else self.config.station.latitude
+            bcn_lon = self.config.beacon.longitude if self.config.beacon.longitude != 0.0 else self.config.station.longitude
             self._beacon_manager = BeaconManager(
                 callsign=self.callsign,
-                latitude=self.config.beacon.latitude,
-                longitude=self.config.beacon.longitude,
+                latitude=bcn_lat,
+                longitude=bcn_lon,
                 symbol_table=self.config.station.symbol_table,
                 symbol_code=self.config.station.symbol_code,
                 comment=self.config.beacon.comment,
@@ -256,6 +262,37 @@ class APRSTuiApp(App):
             status_bar.update_state(ConnectionState.FAILED, transport.display_name)
 
         # APRS-IS is started independently from on_mount, not here
+
+    async def _maybe_start_direwolf(self) -> None:
+        """Start a managed Direwolf instance if a local config exists."""
+        app_dir = Path(__file__).parent.parent
+        dw_conf = app_dir / "direwolf.conf"
+        if not dw_conf.exists():
+            return
+        # Only manage Direwolf for local connections
+        if self.config.server.host not in ("127.0.0.1", "localhost"):
+            return
+
+        from aprs_tui.core.direwolf import DirewolfManager
+
+        try:
+            self._direwolf_manager = DirewolfManager(config_path=dw_conf)
+            self.call_later(self.notify, "Starting Direwolf...")
+            ready = await self._direwolf_manager.start_and_wait_ready(
+                kiss_port=self.config.server.port,
+                timeout=10.0,
+            )
+            if ready:
+                self.call_later(self.notify, "Direwolf ready")
+            else:
+                self.call_later(
+                    self.notify,
+                    "Direwolf failed to start — check direwolf.log",
+                    severity="error",
+                )
+        except FileNotFoundError as e:
+            self.call_later(self.notify, str(e), severity="error")
+            self._direwolf_manager = None
 
     async def _connect_aprs_is(self) -> None:
         """Connect to APRS-IS as a secondary transport."""
@@ -465,6 +502,10 @@ class APRSTuiApp(App):
                         await asyncio.wait_for(mgr.disconnect(), timeout=3.0)
                     except (asyncio.TimeoutError, Exception):
                         pass
+
+            # Stop managed Direwolf
+            if self._direwolf_manager and self._direwolf_manager.is_running:
+                self._direwolf_manager.stop()
         except Exception:
             pass
 
@@ -592,8 +633,10 @@ class APRSTuiApp(App):
             self._beacon_manager.disable()
             self.notify("Beacon OFF")
         else:
-            if self.config.beacon.latitude == 0.0 and self.config.beacon.longitude == 0.0:
-                self.notify("Set your position first (Ctrl+W → beacon)", severity="warning")
+            bcn_lat = self.config.beacon.latitude if self.config.beacon.latitude != 0.0 else self.config.station.latitude
+            bcn_lon = self.config.beacon.longitude if self.config.beacon.longitude != 0.0 else self.config.station.longitude
+            if bcn_lat == 0.0 and bcn_lon == 0.0:
+                self.notify("Set your position first (Ctrl+W → station)", severity="warning")
                 return
             self._beacon_manager.enable()
             self.notify(f"Beacon ON - every {self._beacon_manager.interval}s")
