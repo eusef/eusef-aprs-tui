@@ -29,10 +29,12 @@ def default_config_path() -> Path:
 
 
 class StationConfig(BaseModel):
-    """Station identity and APRS symbol settings."""
+    """Station identity, position, and APRS symbol settings."""
 
     callsign: str
     ssid: Annotated[int, Field(ge=0, le=15)] = 0
+    latitude: Annotated[float, Field(ge=-90, le=90)] = 0.0
+    longitude: Annotated[float, Field(ge=-180, le=180)] = 0.0
     symbol_table: str = "/"
     symbol_code: str = "-"
 
