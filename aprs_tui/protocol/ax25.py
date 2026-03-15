@@ -195,16 +195,20 @@ def ax25_encode(
 
     *source* and *destination* are ``"CALL-SSID"`` strings.
     *digipeaters* is an optional list of ``"CALL-SSID"`` strings.
+
+    AX.25 command/response: For a UI command frame, destination c/r=1,
+    source c/r=0. The c/r bit is bit 7 of the SSID byte.
     """
     if digipeaters is None:
         digipeaters = []
 
-    # Destination is first, never last (unless no source follows, but that
-    # can't happen).
+    # Destination is first, never last. Set c/r bit (bit 7) for command frame.
     dest_call, dest_ssid = _parse_callsign_ssid(destination)
-    frame = bytearray(encode_address(dest_call, dest_ssid, last=False))
+    dest_addr = bytearray(encode_address(dest_call, dest_ssid, last=False))
+    dest_addr[6] |= 0x80  # Set command bit on destination
+    frame = bytearray(dest_addr)
 
-    # Source -- last only if no digipeaters
+    # Source -- last only if no digipeaters. c/r=0 for command frame (default).
     src_call, src_ssid = _parse_callsign_ssid(source)
     is_last_src = len(digipeaters) == 0
     frame.extend(encode_address(src_call, src_ssid, last=is_last_src))

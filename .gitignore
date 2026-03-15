@@ -10,3 +10,6 @@ build/
 htmlcov/
 *.toml.bak
 .DS_Store
+direwolf.conf
+direwolf.conf.bak
+direwolf.log
