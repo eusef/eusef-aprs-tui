@@ -3,7 +3,7 @@
 import serial
 import time
 
-DEVICE = "/dev/cu.TNC4Mobilinkd"
+DEVICE = "/dev/cu.usbmodem2082336543461"
 
 s = serial.Serial(DEVICE, 9600, timeout=2)
 print(f"Opened: {s.name}")

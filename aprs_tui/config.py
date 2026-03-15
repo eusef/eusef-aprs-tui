@@ -50,9 +50,9 @@ class StationConfig(BaseModel):
 class ServerConfig(BaseModel):
     """Transport server connection settings."""
 
-    protocol: Literal["kiss-tcp", "kiss-serial", "kiss-bt", "aprs-is"] = "kiss-tcp"
+    protocol: Literal["kiss-tcp", "kiss-serial", "kiss-bt", "kiss-ble", "aprs-is"] = "kiss-tcp"
     host: str = "127.0.0.1"
-    port: Annotated[int, Field(ge=1, le=65535)] = 8001
+    port: Annotated[int, Field(ge=0, le=65535)] = 8001
 
 
 class BeaconConfig(BaseModel):

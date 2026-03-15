@@ -117,3 +117,11 @@
 
 1. **TCP to Pi blocked** - Port 8001 on Pi unreachable from Mac despite firewall flushed. SSH works. Likely Firewalla Gold SE router rule. Workaround: SSH tunnel `ssh -L 8001:127.0.0.1:8001 phil@direwolf.local -N`
 2. **Mobilinkd phone app conflict** - TNC4 only allows one BT connection. Close phone app before using TUI.
+3. **Mobilinkd TNC4 is BLE only** - The TNC4 sends KISS data over Bluetooth Low Energy (BLE), NOT classic BT SPP serial. The `/dev/cu.TNC4Mobilinkd` serial port does not carry KISS data. Must use `kiss-ble` protocol with the `bleak` library.
+4. **Mobilinkd TNC4 USB is firmware-update only** - The USB port does not carry KISS data. BLE is the only data path.
+
+## macOS BLE Notes
+
+- **First BLE connection**: macOS shows a "Connection Request from: TNC4 Mobilinkd" popup. Click **"Connect"** to allow. Do NOT check "Ignore this device". This only appears once per device.
+- **BLE pairing**: After clicking Connect, macOS remembers the pairing. Subsequent connections are automatic.
+- **Bluetooth permissions**: macOS may also ask for Bluetooth permission for Terminal/iTerm2. Allow it in System Settings > Privacy & Security > Bluetooth.

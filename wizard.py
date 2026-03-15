@@ -130,6 +130,71 @@ def step_serial_device() -> str | None:
     return selected
 
 
+def _step_ble_setup(plat: dict) -> tuple[str | None, int]:
+    """Mobilinkd TNC4 BLE setup.
+
+    Returns (address_or_name, 0) for kiss-ble protocol.
+    The 'port' field is unused for BLE but we return 0.
+    """
+    console.print("\n[bold]Mobilinkd TNC4 BLE Setup[/bold]")
+    console.print("[dim]The TNC4 uses Bluetooth Low Energy (BLE) for KISS data.[/dim]")
+    console.print("[dim]Make sure your TNC4 is powered on and NOT connected to the phone app.[/dim]\n")
+
+    # Try scanning for BLE devices
+    scan = questionary.confirm("Scan for BLE TNC devices? (10 seconds)", default=True).ask()
+    if scan is None:
+        raise KeyboardInterrupt
+
+    device_address = None
+    if scan:
+        console.print("  Scanning for BLE devices...")
+        try:
+            import asyncio
+            from aprs_tui.transport.kiss_ble import scan_for_tnc
+
+            loop = asyncio.new_event_loop()
+            devices = loop.run_until_complete(scan_for_tnc(timeout=10.0))
+            loop.close()
+
+            if devices:
+                console.print(f"  [green]Found {len(devices)} TNC device(s):[/green]")
+                choices = []
+                for d in devices:
+                    choices.append(questionary.Choice(
+                        f"{d['name']} ({d['address']})", value=d['address']
+                    ))
+                choices.append(questionary.Choice("Enter manually", value="__manual__"))
+
+                selected = questionary.select("Select your TNC:", choices=choices).ask()
+                if selected is None:
+                    raise KeyboardInterrupt
+                if selected != "__manual__":
+                    device_address = selected
+            else:
+                console.print("  [yellow]No BLE TNC devices found.[/yellow]")
+                console.print("  [dim]Make sure the TNC4 is powered on and not connected to another app.[/dim]")
+        except ImportError:
+            console.print("  [yellow]BLE scanning requires 'bleak' library.[/yellow]")
+        except Exception as e:
+            console.print(f"  [yellow]BLE scan error: {e}[/yellow]")
+
+    if device_address is None:
+        # Manual entry - accept name or MAC address
+        console.print("\n  [dim]Enter the TNC name (e.g., 'TNC4 Mobilinkd') or MAC address.[/dim]")
+        console.print("  [dim]You can find the MAC in System Settings > Bluetooth > TNC4 > info[/dim]")
+        device_address = questionary.text(
+            "BLE device name or address:",
+            default="TNC4 Mobilinkd",
+        ).ask()
+        if device_address is None:
+            raise KeyboardInterrupt
+
+    console.print(f"\n  [green]\u2713[/green] Will connect via BLE to: {device_address}")
+    # Return address and 0 (port unused for BLE)
+    # The caller needs to know this is BLE, so we use a special return
+    return f"ble:{device_address}", 0
+
+
 def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
     """Bluetooth TNC setup.
 
@@ -148,8 +213,22 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
     console.print("\n[bold]Bluetooth TNC Setup[/bold]")
     console.print("[dim]Supported: Kenwood TH-D74/D75, Mobilinkd TNC3/TNC4, UV-Pro[/dim]")
 
+    # --- Check TNC type: BLE (TNC4) vs classic SPP ---
+    tnc_type = questionary.select(
+        "Which TNC are you connecting?",
+        choices=[
+            questionary.Choice("Mobilinkd TNC4 (BLE)", value="ble"),
+            questionary.Choice("Mobilinkd TNC3 / Kenwood / UV-Pro (Classic BT)", value="classic"),
+        ],
+    ).ask()
+    if tnc_type is None:
+        raise KeyboardInterrupt
+
+    if tnc_type == "ble":
+        return _step_ble_setup(plat)
+
     if plat["system"] == "Darwin":
-        # --- macOS: direct serial connection (no socat needed) ---
+        # --- macOS classic BT: direct serial connection ---
         console.print(
             "\n[dim]On macOS, the TUI connects directly to the BT serial device.[/dim]"
         )
@@ -317,6 +396,17 @@ def step_connection_type(config: AppConfig) -> AppConfig:
     if "Bluetooth" in conn_type:
         device_or_host, port_or_baud = step_bluetooth_setup(plat)
         if device_or_host:
+            # Check if BLE (returned from _step_ble_setup as "ble:address")
+            if isinstance(device_or_host, str) and device_or_host.startswith("ble:"):
+                ble_address = device_or_host[4:]  # strip "ble:" prefix
+                return config.model_copy(
+                    update={
+                        "server": ServerConfig(
+                            protocol="kiss-ble", host=ble_address, port=0
+                        ),
+                    }
+                )
+            # Classic BT:
             # On macOS: device_or_host is /dev/cu.*, port_or_baud is baud rate
             # On Linux: device_or_host is "localhost", port_or_baud is TCP port
             return config.model_copy(

@@ -169,10 +169,13 @@ class APRSTuiApp(App):
                 self.config.server.host,
                 self.config.server.port,
             )
+        elif protocol == "kiss-ble":
+            from aprs_tui.transport.kiss_ble import KissBleTransport
+            # host field stores the BLE address or device name
+            transport = KissBleTransport(address=self.config.server.host)
         elif protocol in ("kiss-serial", "kiss-bt"):
             from aprs_tui.transport.kiss_serial import KissSerialTransport
             from aprs_tui.transport.kiss_bt import KissBtTransport
-            # host field stores the device path, port stores baud rate
             device = self.config.server.host
             baudrate = self.config.server.port
             if protocol == "kiss-bt":
