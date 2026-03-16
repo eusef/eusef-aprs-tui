@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/philjohnston/.local/share/**)",
+      "Read(//Users/philjohnston/.local/share/aprs-tui/**)"
+    ]
+  }
+}

@@ -1,26 +1,35 @@
-"""KISS transport over Bluetooth Low Energy (BLE) for Mobilinkd TNC4.
+"""KISS transport over Bluetooth Low Energy (BLE).
 
-The TNC4 uses BLE GATT for KISS data instead of classic BT SPP serial.
+Supports devices that expose KISS data via BLE GATT:
+  - Mobilinkd TNC4
+  - BTECH UV-PRO
+  - VGC VR-N76 (same hardware as UV-PRO)
+
 Uses the `bleak` library for cross-platform BLE support.
 
-BLE Service UUIDs (Mobilinkd TNC4):
+BLE Service UUIDs (shared across all supported devices):
   Service:  00000001-ba2a-46c9-ae49-01b0961f68bb
-  TX (TNC→App): 00000002-ba2a-46c9-ae49-01b0961f68bb  (notify)
-  RX (App→TNC): 00000003-ba2a-46c9-ae49-01b0961f68bb  (write)
+  TX (Device→App): 00000003-ba2a-46c9-ae49-01b0961f68bb  (notify)
+  RX (App→Device): 00000002-ba2a-46c9-ae49-01b0961f68bb  (write)
+
+Some devices (e.g., UV-PRO on macOS) require BLE bonding for write-with-response,
+which macOS Core Bluetooth cannot initiate programmatically. For these devices,
+KissBleHybridTransport uses BLE for RX and classic BT serial for TX.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from functools import partial
 
 from .base import ConnectionState, Transport
 
 logger = logging.getLogger(__name__)
 
-# Mobilinkd TNC4 BLE UUIDs
+# BLE KISS UUIDs (shared by Mobilinkd TNC4, BTECH UV-PRO, VGC VR-N76)
 KISS_SERVICE_UUID = "00000001-ba2a-46c9-ae49-01b0961f68bb"
-KISS_TX_CHAR_UUID = "00000003-ba2a-46c9-ae49-01b0961f68bb"  # TNC → App (notify)
-KISS_RX_CHAR_UUID = "00000002-ba2a-46c9-ae49-01b0961f68bb"  # App → TNC (write)
+KISS_TX_CHAR_UUID = "00000003-ba2a-46c9-ae49-01b0961f68bb"  # Device → App (notify)
+KISS_RX_CHAR_UUID = "00000002-ba2a-46c9-ae49-01b0961f68bb"  # App → Device (write)
 
 # KISS constants
 FEND = 0xC0
@@ -31,30 +40,43 @@ KISS_DATA_CMD = 0x00
 
 
 async def scan_for_tnc(timeout: float = 10.0) -> list[dict]:
-    """Scan for Mobilinkd TNC BLE devices.
+    """Scan for BLE KISS TNC devices (Mobilinkd TNC4, BTECH UV-PRO, etc.).
 
+    Matches by device name or by advertising the known KISS BLE service UUID.
     Returns list of dicts with 'name', 'address' keys.
     """
     from bleak import BleakScanner
 
+    _KNOWN_NAMES = ("mobilinkd", "tnc", "uv-pro", "uvpro", "btech", "vr-n76", "vrn76", "vgc")
+
     devices = []
-    discovered = await BleakScanner.discover(timeout=timeout)
-    for d in discovered:
-        name = d.name or ""
-        if "mobilinkd" in name.lower() or "tnc" in name.lower():
-            devices.append({"name": name, "address": d.address})
+    discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    for dev, adv in discovered.values():
+        name = (dev.name or "") if hasattr(dev, "name") else ""
+        address = dev.address if hasattr(dev, "address") else str(dev)
+        name_lower = name.lower()
+
+        # Match by name
+        name_match = any(n in name_lower for n in _KNOWN_NAMES)
+
+        # Match by KISS service UUID in advertisement
+        svc_uuids = adv.service_uuids if adv and hasattr(adv, "service_uuids") else []
+        uuid_match = KISS_SERVICE_UUID in svc_uuids
+
+        if name_match or uuid_match:
+            devices.append({"name": name or address, "address": address})
     return devices
 
 
 class KissBleTransport(Transport):
-    """KISS transport over BLE for Mobilinkd TNC4.
+    """KISS transport over BLE (Mobilinkd TNC4, BTECH UV-PRO, VGC VR-N76).
 
-    Connects to the TNC via BLE GATT, subscribes to KISS TX notifications,
+    Connects via BLE GATT, subscribes to KISS TX notifications,
     and writes KISS frames to the RX characteristic.
 
     Args:
-        address: BLE device address (e.g., "34:81:F4:F6:0D:9B")
-                 or device name (e.g., "TNC4 Mobilinkd")
+        address: BLE device address/UUID (e.g., "DA78B460-FC42-AF4C-975D-0505B8BDE531")
+                 or device name (e.g., "UV-PRO", "TNC4 Mobilinkd")
     """
 
     def __init__(self, address: str) -> None:
@@ -91,6 +113,22 @@ class KissBleTransport(Transport):
                     raise ConnectionError("BLE connection failed")
 
                 # Small delay to let BLE stabilize
+                await asyncio.sleep(0.5)
+
+                mtu = getattr(self._client, "mtu_size", 23)
+                logger.info("BLE MTU: %d (write chunk size: %d)", mtu, max(mtu - 3, 20))
+
+                # Trigger BLE encryption/pairing by attempting an encrypted read.
+                # Some devices (e.g., BTECH UV-PRO) require bonding for TX writes.
+                # On macOS Core Bluetooth, accessing an encrypted characteristic
+                # prompts the OS to negotiate encryption automatically.
+                _ENCRYPTED_CHAR = "00001103-d102-11e1-9b23-00025b00a5a5"
+                try:
+                    await self._client.read_gatt_char(_ENCRYPTED_CHAR)
+                    logger.info("BLE encryption negotiated via encrypted char read")
+                except Exception as enc_err:
+                    logger.debug("BLE encrypted char read (expected to fail or trigger pairing): %s", enc_err)
+
                 await asyncio.sleep(0.5)
 
                 # Subscribe to KISS TX notifications (TNC → App)
@@ -169,12 +207,23 @@ class KissBleTransport(Transport):
 
         kiss_data = self._kiss_encode(data)
 
-        # BLE has a max write size (~20 bytes default, can be negotiated higher)
-        # Send in chunks if needed
-        chunk_size = 20
+        # Use negotiated MTU minus 3 bytes for ATT overhead (default 20 if unknown)
+        mtu = getattr(self._client, "mtu_size", 23)
+        chunk_size = max(mtu - 3, 20)
+        logger.debug("BLE TX: %d bytes (KISS), MTU=%d, chunk=%d", len(kiss_data), mtu, chunk_size)
+
         for i in range(0, len(kiss_data), chunk_size):
             chunk = kiss_data[i:i + chunk_size]
-            await self._client.write_gatt_char(KISS_RX_CHAR_UUID, chunk)
+            logger.debug("BLE TX chunk %d: %s", i // chunk_size, chunk.hex())
+            # Try write-with-response first (works if BLE encryption was
+            # negotiated during connect). Fall back to write-without-response
+            # for devices that don't require bonding.
+            try:
+                await self._client.write_gatt_char(KISS_RX_CHAR_UUID, chunk, response=True)
+            except Exception:
+                await self._client.write_gatt_char(KISS_RX_CHAR_UUID, chunk, response=False)
+            if i + chunk_size < len(kiss_data):
+                await asyncio.sleep(0.05)  # Small delay between chunks
 
     @property
     def state(self) -> ConnectionState:
@@ -270,3 +319,94 @@ class KissBleTransport(Transport):
         """Check if address looks like a MAC address."""
         parts = address.replace("-", ":").split(":")
         return len(parts) == 6 and all(len(p) == 2 for p in parts)
+
+
+class KissBleHybridTransport(Transport):
+    """Hybrid BLE+Serial transport for devices that require bonding for BLE writes.
+
+    Uses BLE GATT for RX (notifications) and classic Bluetooth serial for TX.
+    This works around macOS Core Bluetooth's inability to programmatically
+    initiate BLE bonding, which some devices (BTECH UV-PRO, VGC VR-N76) require
+    for write-with-response.
+
+    Args:
+        ble_address: BLE device address/UUID for RX
+        serial_device: Classic BT serial device path for TX (e.g., /dev/cu.UV-PRO)
+        baudrate: Baud rate for serial TX (default 9600)
+    """
+
+    def __init__(self, ble_address: str, serial_device: str, baudrate: int = 9600) -> None:
+        self._ble_address = ble_address
+        self._serial_device = serial_device
+        self._baudrate = baudrate
+        # BLE side (RX)
+        self._ble = KissBleTransport(address=ble_address)
+        # Serial side (TX) - lazy init
+        self._serial = None  # serial.Serial instance
+        self._state = ConnectionState.DISCONNECTED
+
+    async def connect(self) -> None:
+        import serial
+
+        self._state = ConnectionState.CONNECTING
+
+        # Connect BLE for RX
+        await self._ble.connect()
+
+        # Open classic BT serial for TX
+        loop = asyncio.get_event_loop()
+        try:
+            self._serial = await loop.run_in_executor(
+                None,
+                partial(serial.Serial, self._serial_device, self._baudrate, timeout=5.0),
+            )
+            logger.info("Hybrid TX serial opened: %s@%d", self._serial_device, self._baudrate)
+        except Exception as exc:
+            logger.warning("Hybrid TX serial failed (TX disabled): %s", exc)
+            # Continue with RX-only -- don't fail the whole connection
+            self._serial = None
+
+        self._state = ConnectionState.CONNECTED
+        logger.info("Hybrid BLE+Serial connected (RX=%s, TX=%s)",
+                     self._ble_address, self._serial_device if self._serial else "DISABLED")
+
+    async def disconnect(self) -> None:
+        await self._ble.disconnect()
+        if self._serial:
+            loop = asyncio.get_event_loop()
+            try:
+                await loop.run_in_executor(None, self._serial.close)
+            except Exception:
+                pass
+            self._serial = None
+        self._state = ConnectionState.DISCONNECTED
+
+    async def read_frame(self) -> bytes:
+        """Read from BLE (notifications)."""
+        return await self._ble.read_frame()
+
+    async def write_frame(self, data: bytes) -> None:
+        """Write via classic BT serial."""
+        if self._serial is None or not self._serial.is_open:
+            raise ConnectionError("TX serial not connected")
+
+        kiss_data = KissBleTransport._kiss_encode(data)
+        logger.debug("Hybrid TX: %d bytes via serial", len(kiss_data))
+
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, self._serial.write, kiss_data)
+        except Exception as exc:
+            raise ConnectionError(f"Serial TX error: {exc}") from exc
+
+    @property
+    def state(self) -> ConnectionState:
+        # If BLE disconnects, we're disconnected
+        if self._ble.state == ConnectionState.DISCONNECTED and self._state == ConnectionState.CONNECTED:
+            self._state = ConnectionState.DISCONNECTED
+        return self._state
+
+    @property
+    def display_name(self) -> str:
+        tx_status = self._serial_device if self._serial else "TX disabled"
+        return f"BLE+Serial {self._ble_address[:8]}... ({tx_status})"

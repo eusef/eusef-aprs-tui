@@ -90,9 +90,7 @@ def step_deps_check() -> None:
         console.print(f"  [green]\u2713[/green] Serial support (prefix: {plat['serial_device_prefix']})")
     if plat["has_bluetooth"]:
         console.print(f"  [green]\u2713[/green] Bluetooth support (prefix: {plat['bt_device_prefix']})")
-
-    console.print("\n[dim]This wizard assumes Direwolf (or equivalent KISS TCP server)\nis already installed and configured on your target host.[/dim]")
-    console.print("[dim]If not, see: https://github.com/wb2osz/direwolf[/dim]\n")
+    console.print()
 
 
 def step_serial_device() -> str | None:
@@ -130,31 +128,32 @@ def step_serial_device() -> str | None:
     return selected
 
 
-def _step_ble_setup(plat: dict) -> tuple[str | None, int]:
-    """Mobilinkd TNC4 BLE setup.
+def _step_ble_setup(plat: dict, device_hint: str = "") -> tuple[str | None, int]:
+    """BLE KISS TNC setup (Mobilinkd TNC4, BTECH UV-PRO, VGC VR-N76, etc.).
 
     Returns (address_or_name, 0) for kiss-ble protocol.
     The 'port' field is unused for BLE but we return 0.
     """
-    console.print("\n[bold]Mobilinkd TNC4 BLE Setup[/bold]")
-    console.print("[dim]The TNC4 uses Bluetooth Low Energy (BLE) for KISS data.[/dim]")
-    console.print("[dim]Make sure your TNC4 is powered on and NOT connected to the phone app.[/dim]\n")
+    device_label = device_hint or "BLE TNC"
+    console.print(f"\n[bold]{device_label} — BLE Setup[/bold]")
+    console.print("[dim]Make sure your device is powered on and NOT connected to another app (e.g., phone).[/dim]")
+    console.print("[dim yellow]Note: Some devices may not appear on the first scan — try scanning again if needed.[/dim yellow]\n")
 
     # Scan loop - allow re-scanning
     device_address = None
     while device_address is None:
-        scan = questionary.confirm("Scan for BLE TNC devices? (10 seconds)", default=True).ask()
+        scan = questionary.confirm("Scan for BLE TNC devices? (20 seconds)", default=True).ask()
         if scan is None:
             raise KeyboardInterrupt
 
         if scan:
-            console.print("  Scanning for BLE devices...")
+            console.print("  Scanning for BLE devices (this may take a moment)...")
             try:
                 import asyncio
                 from aprs_tui.transport.kiss_ble import scan_for_tnc
 
                 loop = asyncio.new_event_loop()
-                devices = loop.run_until_complete(scan_for_tnc(timeout=10.0))
+                devices = loop.run_until_complete(scan_for_tnc(timeout=20.0))
                 loop.close()
 
                 if devices:
@@ -177,7 +176,8 @@ def _step_ble_setup(plat: dict) -> tuple[str | None, int]:
                         break
                 else:
                     console.print("  [yellow]No BLE TNC devices found.[/yellow]")
-                    console.print("  [dim]Make sure the TNC4 is powered on and not connected to another app.[/dim]\n")
+                    console.print("  [dim]Make sure your device is powered on and not connected to another app.[/dim]")
+                    console.print("  [dim]Some radios need a second scan to be discovered.[/dim]\n")
                     action = questionary.select(
                         "What would you like to do?",
                         choices=["Scan again", "Enter manually"],
@@ -193,11 +193,12 @@ def _step_ble_setup(plat: dict) -> tuple[str | None, int]:
 
         # Manual entry fallback
         if device_address is None and not scan:
-            console.print("\n  [dim]Enter the TNC name (e.g., 'TNC4 Mobilinkd') or BLE UUID.[/dim]")
-            console.print("  [dim]You can find the UUID by running: python scripts/test-mobilinkd-ble.py[/dim]")
+            console.print("\n  [dim]Enter the device name or BLE address/UUID.[/dim]")
+            console.print("  [dim]You can find it by running: python ble_monitor.py --scan[/dim]")
+            default_name = device_hint or "TNC4 Mobilinkd"
             entry = questionary.text(
                 "BLE device name or address:",
-                default="TNC4 Mobilinkd",
+                default=default_name,
             ).ask()
             if entry is None:
                 raise KeyboardInterrupt
@@ -207,6 +208,69 @@ def _step_ble_setup(plat: dict) -> tuple[str | None, int]:
     # Return address and 0 (port unused for BLE)
     # The caller needs to know this is BLE, so we use a special return
     return f"ble:{device_address}", 0
+
+
+def _step_hybrid_serial(plat: dict, device_name: str) -> str | None:
+    """Find or ask for the classic BT serial device for hybrid BLE+Serial TX.
+
+    The UV-PRO / VR-N76 need classic BT serial for TX since macOS cannot
+    negotiate BLE bonding for encrypted writes.
+    """
+    console.print(f"\n[bold]Transmit Setup (Classic Bluetooth Pairing)[/bold]")
+    console.print(
+        f"[bold yellow]Important:[/bold yellow] To send messages and beacons, the {device_name} must also be "
+        "paired to your computer over classic Bluetooth."
+    )
+    console.print(
+        "[dim]The BLE connection handles receiving packets, but transmitting requires\n"
+        "a separate classic Bluetooth serial link.[/dim]\n"
+    )
+
+    if plat["system"] == "Darwin":
+        console.print("[bold]Steps to pair:[/bold]")
+        console.print(f"  1. Open [bold]System Settings > Bluetooth[/bold]")
+        console.print(f"  2. Make sure the {device_name} is powered on")
+        console.print(f"  3. Find the {device_name} in the device list and click [bold]Connect[/bold]")
+        console.print(f"  4. Once paired, a serial device (e.g., /dev/cu.{device_name}) will appear\n")
+
+        import glob
+        # Auto-detect likely serial devices
+        bt_devices = []
+        for pattern in ["/dev/cu.UV-PRO*", "/dev/cu.VR-N76*", "/dev/cu.BTECH*",
+                        "/dev/cu.VGC*", "/dev/cu.BT*"]:
+            bt_devices.extend(glob.glob(pattern))
+        # Also check generic cu.* devices
+        for dev in glob.glob("/dev/cu.*"):
+            if dev not in bt_devices and dev not in (
+                "/dev/cu.Bluetooth-Incoming-Port", "/dev/cu.debug-console",
+                "/dev/cu.wlan-debug",
+            ):
+                bt_devices.append(dev)
+
+        if bt_devices:
+            console.print(f"  [green]Found {len(bt_devices)} serial device(s):[/green]")
+            choices = [questionary.Choice(dev, value=dev) for dev in bt_devices]
+            choices.append(questionary.Choice("Enter manually", value="__manual__"))
+            selected = questionary.select("Select the TX serial device:", choices=choices).ask()
+            if selected is None:
+                raise KeyboardInterrupt
+            if selected != "__manual__":
+                console.print(f"  [green]\u2713[/green] TX via: {selected}")
+                return selected
+
+        console.print("  [yellow]No BT serial devices found.[/yellow]")
+        console.print(f"  The {device_name} may not be paired yet.")
+        console.print("  [bold]Pair it in System Settings > Bluetooth[/bold], then re-run the wizard.")
+        console.print("  [dim]You can continue without TX — receiving will still work over BLE.[/dim]")
+
+    device = questionary.text(
+        "Enter serial device path for TX:",
+        default=f"/dev/cu.{device_name}",
+    ).ask()
+    if device is None:
+        raise KeyboardInterrupt
+    console.print(f"  [green]\u2713[/green] TX via: {device}")
+    return device
 
 
 def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
@@ -225,36 +289,101 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
         return None, 0
 
     console.print("\n[bold]Bluetooth TNC Setup[/bold]")
-    console.print("[dim]Supported: Kenwood TH-D74/D75, Mobilinkd TNC3/TNC4, UV-Pro[/dim]")
+    console.print("[dim]Verified devices are marked with \u2713. Others may work but have not been tested.[/dim]")
+    console.print(
+        "[dim]Want to help verify a device or add support for one not listed?[/dim]"
+    )
+    console.print(
+        "[dim]Reach out on Ko-fi or GitHub and we can coordinate testing together![/dim]\n"
+    )
 
-    # --- Check TNC type: BLE (TNC4) vs classic SPP ---
+    # --- Check TNC type: BLE vs classic SPP ---
     tnc_type = questionary.select(
-        "Which TNC are you connecting?",
+        "Which device are you connecting?",
         choices=[
-            questionary.Choice("Mobilinkd TNC4 (BLE)", value="ble"),
-            questionary.Choice("Mobilinkd TNC3 / Kenwood / UV-Pro (Classic BT)", value="classic"),
+            questionary.Choice("\u2713 BTECH UV-PRO (BLE)", value="ble-uvpro"),
+            questionary.Choice("\u2713 Mobilinkd TNC4 (BLE)", value="ble-tnc4"),
+            questionary.Choice("  VGC VR-N76 (BLE) — unverified", value="ble-vrn76"),
+            questionary.Choice("  Mobilinkd TNC3 (Classic BT) — unverified", value="classic"),
+            questionary.Choice("  Kenwood TH-D74/D75 (Classic BT) — unverified", value="classic"),
+            questionary.Choice("  Other Bluetooth TNC — unverified", value="classic"),
+            questionary.Choice("  My device isn't listed", value="__not_listed__"),
         ],
     ).ask()
     if tnc_type is None:
         raise KeyboardInterrupt
 
-    if tnc_type == "ble":
-        return _step_ble_setup(plat)
+    if tnc_type == "__not_listed__":
+        console.print("\n[bold]We'd love to add support for your device![/bold]")
+        console.print(
+            "  Reach out on Ko-fi or GitHub and we can coordinate testing together."
+        )
+        console.print("  In the meantime, you can try one of these options:\n")
+        console.print("  [dim]- If your device uses BLE, try 'Other Bluetooth TNC' above[/dim]")
+        console.print("  [dim]- If your device has a USB/serial port, try 'USB Serial TNC' from the main menu[/dim]")
+        console.print("  [dim]- If your device works with Direwolf, try 'KISS TCP' from the main menu[/dim]\n")
+        proceed = questionary.confirm("Go back to the device list?", default=True).ask()
+        if proceed:
+            return step_bluetooth_setup(plat)
+        return None, 0
+
+    _VERIFIED_BLE = ("ble-uvpro", "ble-tnc4")
+    _VERIFIED_CLASSIC = ()  # none verified yet
+
+    if tnc_type.startswith("ble"):
+        hints = {
+            "ble-uvpro": "UV-PRO",
+            "ble-vrn76": "VR-N76",
+            "ble-tnc4": "TNC4 Mobilinkd",
+        }
+
+        if tnc_type not in _VERIFIED_BLE:
+            console.print(
+                f"\n[yellow]Note:[/yellow] The {hints.get(tnc_type, 'selected device')} has not been "
+                "verified with this app."
+            )
+            console.print(
+                "[dim]It may work, but if you run into issues please report them on GitHub.[/dim]"
+            )
+            console.print(
+                "[dim]If you'd like to send a device for testing, reach out on Ko-fi or GitHub.[/dim]\n"
+            )
+
+        ble_result, _ = _step_ble_setup(plat, device_hint=hints.get(tnc_type, ""))
+        if ble_result is None:
+            return None, 0
+
+        # UV-PRO / VR-N76 need hybrid BLE+Serial (BLE for RX, classic BT serial for TX)
+        # because macOS Core Bluetooth cannot negotiate BLE bonding for encrypted writes.
+        if tnc_type in ("ble-uvpro", "ble-vrn76"):
+            ble_address = ble_result[4:]  # strip "ble:" prefix
+            serial_device = _step_hybrid_serial(plat, hints.get(tnc_type, "UV-PRO"))
+            if serial_device:
+                return f"hybrid:{ble_address}|{serial_device}", 9600
+
+        return ble_result, 0
+
+    if tnc_type == "classic" and tnc_type not in _VERIFIED_CLASSIC:
+        console.print(
+            "\n[yellow]Note:[/yellow] Classic Bluetooth TNC support has not been fully verified."
+        )
+        console.print(
+            "[dim]If you run into issues, please report them on GitHub.[/dim]"
+        )
+        console.print(
+            "[dim]If you'd like to send a device for testing, reach out on Ko-fi or GitHub.[/dim]\n"
+        )
 
     if plat["system"] == "Darwin":
         # --- macOS classic BT: direct serial connection ---
-        console.print(
-            "\n[dim]On macOS, the TUI connects directly to the BT serial device.[/dim]"
-        )
-        console.print("[dim]No socat bridge is needed.[/dim]\n")
-        console.print("[bold]Step 1:[/bold] Make sure your TNC is paired in System Settings > Bluetooth")
-        console.print("[bold]Step 2:[/bold] Close the Mobilinkd app on your phone (TNC allows one connection)\n")
+        console.print("\n[bold]Step 1:[/bold] Make sure your TNC is paired in System Settings > Bluetooth")
+        console.print("[bold]Step 2:[/bold] Close any other apps connected to the TNC (only one BT connection at a time)\n")
 
         # Auto-detect BT serial devices
         import glob
         bt_devices = []
         for pattern in ["/dev/cu.TNC*", "/dev/cu.Mobilinkd*", "/dev/cu.Kenwood*",
-                        "/dev/cu.UV-Pro*", "/dev/cu.BT*", "/dev/cu.Bluetooth*"]:
+                        "/dev/cu.BT*", "/dev/cu.Bluetooth*"]:
             bt_devices.extend(glob.glob(pattern))
         # Also include any non-standard cu.* devices (exclude system ones)
         for dev in glob.glob("/dev/cu.*"):
@@ -623,7 +752,7 @@ def step_connection_type(config: AppConfig) -> AppConfig:
     if plat["has_serial"]:
         choices.append("USB Serial TNC (direct serial connection)")
     if plat["has_bluetooth"]:
-        choices.append("Bluetooth TNC (Kenwood, Mobilinkd, UV-Pro)")
+        choices.append("Bluetooth TNC (UV-PRO, VR-N76, Mobilinkd, Kenwood)")
     choices.append("APRS-IS only (internet gateway, no radio)")
 
     conn_type = questionary.select(
@@ -653,7 +782,22 @@ def step_connection_type(config: AppConfig) -> AppConfig:
     if "Bluetooth" in conn_type:
         device_or_host, port_or_baud = step_bluetooth_setup(plat)
         if device_or_host:
-            # Check if BLE (returned from _step_ble_setup as "ble:address")
+            # Hybrid BLE+Serial (UV-PRO / VR-N76): "hybrid:ble_address|serial_device"
+            if isinstance(device_or_host, str) and device_or_host.startswith("hybrid:"):
+                parts = device_or_host[7:].split("|", 1)
+                ble_address = parts[0]
+                serial_device = parts[1] if len(parts) > 1 else ""
+                return config.model_copy(
+                    update={
+                        "server": ServerConfig(
+                            protocol="kiss-ble-hybrid",
+                            host=ble_address,
+                            port=port_or_baud or 9600,
+                            serial_device=serial_device,
+                        ),
+                    }
+                )
+            # Pure BLE (returned from _step_ble_setup as "ble:address")
             if isinstance(device_or_host, str) and device_or_host.startswith("ble:"):
                 ble_address = device_or_host[4:]  # strip "ble:" prefix
                 return config.model_copy(
@@ -1064,7 +1208,8 @@ def step_write_config(config: AppConfig, config_path: Path) -> None:
 Callsign:  {callsign}
 Position:  {position_str}
 Symbol:    {config.station.symbol_table}{config.station.symbol_code}
-Server:    {config.server.host}:{config.server.port} ({config.server.protocol})
+Server:    {config.server.host}:{config.server.port} ({config.server.protocol}){f"""
+TX Serial: {config.server.serial_device}""" if config.server.serial_device else ""}
 Beacon:    {beacon_status}
 APRS-IS:   {aprs_is_status}"""
 
@@ -1107,13 +1252,34 @@ def main() -> None:
             plat = detect_platform()
             device, port = step_bluetooth_setup(plat)
             if device:
-                config = config.model_copy(
-                    update={
-                        "server": ServerConfig(
-                            protocol="kiss-bt", host="localhost", port=port
-                        ),
-                    }
-                )
+                if isinstance(device, str) and device.startswith("hybrid:"):
+                    parts = device[7:].split("|", 1)
+                    config = config.model_copy(
+                        update={
+                            "server": ServerConfig(
+                                protocol="kiss-ble-hybrid",
+                                host=parts[0],
+                                port=port or 9600,
+                                serial_device=parts[1] if len(parts) > 1 else "",
+                            ),
+                        }
+                    )
+                elif isinstance(device, str) and device.startswith("ble:"):
+                    config = config.model_copy(
+                        update={
+                            "server": ServerConfig(
+                                protocol="kiss-ble", host=device[4:], port=0
+                            ),
+                        }
+                    )
+                else:
+                    config = config.model_copy(
+                        update={
+                            "server": ServerConfig(
+                                protocol="kiss-bt", host=device, port=port
+                            ),
+                        }
+                    )
         if "connection" in steps:
             config = step_connection_type(config)
         if "connection_test" in steps:
