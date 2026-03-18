@@ -1,5 +1,7 @@
 # aprs-tui
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/philj2)
+
 A keyboard-driven terminal interface for [APRS](https://en.wikipedia.org/wiki/Automatic_Packet_Reporting_System) — monitor stations, send messages, and beacon your position, all from the command line.
 
 Connects to any KISS TCP endpoint: a local [Direwolf](https://github.com/wb2osz/direwolf) instance, a Bluetooth TNC (Kenwood TH-D74/D75, Mobilinkd, UV-Pro), a remote server over your LAN, or the APRS-IS internet gateway — with no code changes. A companion setup wizard handles all hardware configuration interactively.
@@ -208,6 +210,12 @@ pytest
 pytest -m "not slow"         # skip slow integration tests
 pytest -m "not bluetooth"    # skip tests requiring BT hardware
 ```
+
+## Support This Project
+
+If aprs-tui saves you time at a park activation or helps you get on APRS, consider buying me a coffee.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/philj2)
 
 ## License
 
