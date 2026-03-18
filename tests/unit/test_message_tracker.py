@@ -159,6 +159,7 @@ class TestAckHandling:
         """After ack is received, no more retries are scheduled for that message."""
         tracker = _make_tracker()
         msg_id = tracker.send_message("W3ADO-1", "Hello")
+        tracker.start_retry_loop(msg_id)
 
         # Verify retry task exists
         assert msg_id in tracker._retry_tasks
@@ -253,7 +254,8 @@ class TestMessageTimeout:
             send_func=send_mock,
             on_state_change=state_changes.append,
         )
-        tracker.send_message("W3ADO-1", "Hello")
+        msg_id = tracker.send_message("W3ADO-1", "Hello")
+        tracker.start_retry_loop(msg_id)
 
         # Let the retry loop complete (max_retries=1 means one send, no sleep)
         await asyncio.sleep(0.1)
@@ -269,7 +271,8 @@ class TestMessageTimeout:
             max_retries=1,
             on_state_change=state_changes.append,
         )
-        tracker.send_message("W3ADO-1", "Hello")
+        msg_id = tracker.send_message("W3ADO-1", "Hello")
+        tracker.start_retry_loop(msg_id)
 
         # Let the retry loop complete
         await asyncio.sleep(0.1)
@@ -281,7 +284,8 @@ class TestMessageTimeout:
     async def test_timeout_removes_from_pending(self):
         """A timed-out message is removed from the pending queue."""
         tracker = _make_tracker(max_retries=1)
-        tracker.send_message("W3ADO-1", "Hello")
+        msg_id = tracker.send_message("W3ADO-1", "Hello")
+        tracker.start_retry_loop(msg_id)
 
         # Let the retry loop complete
         await asyncio.sleep(0.1)

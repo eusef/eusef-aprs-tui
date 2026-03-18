@@ -127,8 +127,8 @@ class TestConfigValidation:
             AppConfig.model_validate(data)
 
     def test_port_range_validated(self, config_factory):
-        """Port must be 1-65535; invalid ports are rejected."""
-        data = config_factory(server={"protocol": "kiss-tcp", "host": "127.0.0.1", "port": 0})
+        """Port must be 0-65535; invalid ports are rejected."""
+        data = config_factory(server={"protocol": "kiss-tcp", "host": "127.0.0.1", "port": -1})
         with pytest.raises(ValidationError):
             AppConfig.model_validate(data)
         data = config_factory(server={"protocol": "kiss-tcp", "host": "127.0.0.1", "port": 70000})

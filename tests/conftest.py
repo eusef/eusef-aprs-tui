@@ -92,7 +92,9 @@ def sample_ax25_frames() -> dict[str, bytes]:
 
     # Build a simple position packet: W3ADO-1>APRS:!4903.50N/07201.75W-
     info_field = b"!4903.50N/07201.75W-"
-    dest = _encode_address("APRS", ssid=0)
+    dest_raw = bytearray(_encode_address("APRS", ssid=0))
+    dest_raw[6] |= 0x80  # Set command bit on destination (UI command frame)
+    dest = bytes(dest_raw)
     src = _encode_address("W3ADO", ssid=1, last=True)
     control = bytes([0x03])
     pid = bytes([0xF0])
