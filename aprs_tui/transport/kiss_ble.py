@@ -19,6 +19,7 @@ KissBleHybridTransport uses BLE for RX and classic BT serial for TX.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from functools import partial
 
@@ -47,7 +48,7 @@ async def scan_for_tnc(timeout: float = 10.0) -> list[dict]:
     """
     from bleak import BleakScanner
 
-    _KNOWN_NAMES = ("mobilinkd", "tnc", "uv-pro", "uvpro", "btech", "vr-n76", "vrn76", "vgc")
+    _KNOWN_NAMES = ("mobilinkd", "tnc", "uv-pro", "uvpro", "btech", "vr-n76", "vrn76", "vgc")  # noqa: N806
 
     devices = []
     discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
@@ -122,12 +123,15 @@ class KissBleTransport(Transport):
                 # Some devices (e.g., BTECH UV-PRO) require bonding for TX writes.
                 # On macOS Core Bluetooth, accessing an encrypted characteristic
                 # prompts the OS to negotiate encryption automatically.
-                _ENCRYPTED_CHAR = "00001103-d102-11e1-9b23-00025b00a5a5"
+                _ENCRYPTED_CHAR = "00001103-d102-11e1-9b23-00025b00a5a5"  # noqa: N806
                 try:
                     await self._client.read_gatt_char(_ENCRYPTED_CHAR)
                     logger.info("BLE encryption negotiated via encrypted char read")
                 except Exception as enc_err:
-                    logger.debug("BLE encrypted char read (expected to fail or trigger pairing): %s", enc_err)
+                    logger.debug(
+                        "BLE encrypted char read (expected to fail or trigger pairing): %s",
+                        enc_err,
+                    )
 
                 await asyncio.sleep(0.5)
 
@@ -164,14 +168,10 @@ class KissBleTransport(Transport):
         if self._client:
             try:
                 if self._client.is_connected:
-                    try:
+                    with contextlib.suppress(Exception):
                         await self._client.stop_notify(KISS_TX_CHAR_UUID)
-                    except Exception:
-                        pass
-                    try:
+                    with contextlib.suppress(Exception):
                         await asyncio.wait_for(self._client.disconnect(), timeout=3.0)
-                    except Exception:
-                        pass
             except Exception:
                 pass
             self._client = None
@@ -374,10 +374,8 @@ class KissBleHybridTransport(Transport):
         await self._ble.disconnect()
         if self._serial:
             loop = asyncio.get_event_loop()
-            try:
+            with contextlib.suppress(Exception):
                 await loop.run_in_executor(None, self._serial.close)
-            except Exception:
-                pass
             self._serial = None
         self._state = ConnectionState.DISCONNECTED
 
@@ -402,7 +400,10 @@ class KissBleHybridTransport(Transport):
     @property
     def state(self) -> ConnectionState:
         # If BLE disconnects, we're disconnected
-        if self._ble.state == ConnectionState.DISCONNECTED and self._state == ConnectionState.CONNECTED:
+        if (
+            self._ble.state == ConnectionState.DISCONNECTED
+            and self._state == ConnectionState.CONNECTED
+        ):
             self._state = ConnectionState.DISCONNECTED
         return self._state
 

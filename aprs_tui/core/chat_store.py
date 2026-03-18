@@ -1,9 +1,11 @@
 """Persistent chat storage - saves conversations to JSON files."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from pathlib import Path
+
 from platformdirs import user_data_dir
 
 logger = logging.getLogger(__name__)
@@ -70,7 +72,5 @@ def list_chat_callsigns() -> set[str]:
 def delete_chat(callsign: str) -> None:
     """Delete chat history for a callsign."""
     path = _chat_file(callsign)
-    try:
+    with contextlib.suppress(Exception):
         path.unlink(missing_ok=True)
-    except Exception:
-        pass

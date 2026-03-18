@@ -1,13 +1,13 @@
 """Station list panel with sortable DataTable."""
 from __future__ import annotations
 
+import contextlib
 import time
 
 from textual.message import Message
 from textual.widgets import DataTable
 
 from aprs_tui.core.station_tracker import StationRecord
-
 
 SORT_KEYS = ["last_heard", "callsign", "distance"]
 
@@ -108,10 +108,8 @@ class StationPanel(DataTable):
         # Restore selection if user had selected a station
         if self._user_selected and prev_callsign and prev_callsign in self._callsigns:
             row_idx = self._callsigns.index(prev_callsign)
-            try:
+            with contextlib.suppress(Exception):
                 self.move_cursor(row=row_idx)
-            except Exception:
-                pass
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """When cursor moves to a row, post StationSelected."""

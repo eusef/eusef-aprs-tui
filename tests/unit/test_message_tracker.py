@@ -24,17 +24,14 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-import pytest
-
 from aprs_tui.core.message_tracker import (
+    RETRY_DELAYS,
     InboundMessage,
     MessageState,
     MessageTracker,
-    RETRY_DELAYS,
     TrackedMessage,
 )
 from aprs_tui.protocol.types import APRSPacket
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,16 +1,14 @@
 """Message panel with inbox and compose interface."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import time
+from dataclasses import dataclass, field
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
 from textual.widget import Widget
-from textual.widgets import Input, RichLog, Static
-
+from textual.widgets import Input, RichLog
 
 # Message state symbols
 STATE_SYMBOLS = {
@@ -82,7 +80,11 @@ class MessagePanel(Widget):
     def compose(self) -> ComposeResult:
         yield RichLog(id="msg-inbox", wrap=True, markup=False)
         yield Input(placeholder="To: callsign", id="msg-to-input", max_length=9)
-        yield Input(placeholder="Msg: (67 chars max) Enter to send", id="msg-text-input", max_length=67)
+        yield Input(
+            placeholder="Msg: (67 chars max) Enter to send",
+            id="msg-text-input",
+            max_length=67,
+        )
 
     def add_received_message(self, source: str, text: str, msg_id: str | None = None) -> None:
         """Add an inbound message to the inbox."""
@@ -94,7 +96,9 @@ class MessagePanel(Widget):
         self._render_message(msg)
         self.border_title = f"Messages ({len(self._messages)})"
 
-    def add_sent_message(self, destination: str, text: str, msg_id: str, state: str = "pending") -> None:
+    def add_sent_message(
+        self, destination: str, text: str, msg_id: str, state: str = "pending"
+    ) -> None:
         """Add an outbound message to the inbox."""
         msg = DisplayMessage(
             source=self._callsign, destination=destination,

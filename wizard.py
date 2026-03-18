@@ -15,10 +15,9 @@ from rich.console import Console
 from rich.panel import Panel
 
 from aprs_tui.config import (
-    APRSISConfig,
     AppConfig,
+    APRSISConfig,
     BeaconConfig,
-    ConnectionConfig,
     ServerConfig,
     StationConfig,
     default_config_path,
@@ -45,7 +44,7 @@ def detect_platform() -> dict:
 
     if system == "Linux":
         try:
-            with open("/proc/version", "r") as f:
+            with open("/proc/version") as f:
                 if "microsoft" in f.read().lower():
                     is_wsl = True
         except FileNotFoundError:
@@ -87,9 +86,11 @@ def step_deps_check() -> None:
         console.print("  [green]\u2713[/green] macOS detected (dns-sd available)")
 
     if plat["has_serial"]:
-        console.print(f"  [green]\u2713[/green] Serial support (prefix: {plat['serial_device_prefix']})")
+        serial_prefix = plat["serial_device_prefix"]
+        console.print(f"  [green]\u2713[/green] Serial support (prefix: {serial_prefix})")
     if plat["has_bluetooth"]:
-        console.print(f"  [green]\u2713[/green] Bluetooth support (prefix: {plat['bt_device_prefix']})")
+        bt_prefix = plat["bt_device_prefix"]
+        console.print(f"  [green]\u2713[/green] Bluetooth support (prefix: {bt_prefix})")
     console.print()
 
 
@@ -135,9 +136,15 @@ def _step_ble_setup(plat: dict, device_hint: str = "") -> tuple[str | None, int]
     The 'port' field is unused for BLE but we return 0.
     """
     device_label = device_hint or "BLE TNC"
-    console.print(f"\n[bold]{device_label} — BLE Setup[/bold]")
-    console.print("[dim]Make sure your device is powered on and NOT connected to another app (e.g., phone).[/dim]")
-    console.print("[dim yellow]Note: Some devices may not appear on the first scan — try scanning again if needed.[/dim yellow]\n")
+    console.print(f"\n[bold]{device_label} \u2014 BLE Setup[/bold]")
+    console.print(
+        "[dim]Make sure your device is powered on and NOT connected to another app "
+        "(e.g., phone).[/dim]"
+    )
+    console.print(
+        "[dim yellow]Note: Some devices may not appear on the first scan \u2014 "
+        "try scanning again if needed.[/dim yellow]\n"
+    )
 
     # Scan loop - allow re-scanning
     device_address = None
@@ -150,6 +157,7 @@ def _step_ble_setup(plat: dict, device_hint: str = "") -> tuple[str | None, int]
             console.print("  Scanning for BLE devices (this may take a moment)...")
             try:
                 import asyncio
+
                 from aprs_tui.transport.kiss_ble import scan_for_tnc
 
                 loop = asyncio.new_event_loop()
@@ -176,7 +184,10 @@ def _step_ble_setup(plat: dict, device_hint: str = "") -> tuple[str | None, int]
                         break
                 else:
                     console.print("  [yellow]No BLE TNC devices found.[/yellow]")
-                    console.print("  [dim]Make sure your device is powered on and not connected to another app.[/dim]")
+                    console.print(
+                        "  [dim]Make sure your device is powered on "
+                        "and not connected to another app.[/dim]"
+                    )
                     console.print("  [dim]Some radios need a second scan to be discovered.[/dim]\n")
                     action = questionary.select(
                         "What would you like to do?",
@@ -216,10 +227,10 @@ def _step_hybrid_serial(plat: dict, device_name: str) -> str | None:
     The UV-PRO / VR-N76 need classic BT serial for TX since macOS cannot
     negotiate BLE bonding for encrypted writes.
     """
-    console.print(f"\n[bold]Transmit Setup (Classic Bluetooth Pairing)[/bold]")
+    console.print("\n[bold]Transmit Setup (Classic Bluetooth Pairing)[/bold]")
     console.print(
-        f"[bold yellow]Important:[/bold yellow] To send messages and beacons, the {device_name} must also be "
-        "paired to your computer over classic Bluetooth."
+        f"[bold yellow]Important:[/bold yellow] To send messages and beacons, "
+        f"the {device_name} must also be paired to your computer over classic Bluetooth."
     )
     console.print(
         "[dim]The BLE connection handles receiving packets, but transmitting requires\n"
@@ -228,10 +239,14 @@ def _step_hybrid_serial(plat: dict, device_name: str) -> str | None:
 
     if plat["system"] == "Darwin":
         console.print("[bold]Steps to pair:[/bold]")
-        console.print(f"  1. Open [bold]System Settings > Bluetooth[/bold]")
+        console.print("  1. Open [bold]System Settings > Bluetooth[/bold]")
         console.print(f"  2. Make sure the {device_name} is powered on")
-        console.print(f"  3. Find the {device_name} in the device list and click [bold]Connect[/bold]")
-        console.print(f"  4. Once paired, a serial device (e.g., /dev/cu.{device_name}) will appear\n")
+        console.print(
+            f"  3. Find the {device_name} in the device list and click [bold]Connect[/bold]"
+        )
+        console.print(
+            f"  4. Once paired, a serial device (e.g., /dev/cu.{device_name}) will appear\n"
+        )
 
         import glob
         # Auto-detect likely serial devices
@@ -260,8 +275,12 @@ def _step_hybrid_serial(plat: dict, device_name: str) -> str | None:
 
         console.print("  [yellow]No BT serial devices found.[/yellow]")
         console.print(f"  The {device_name} may not be paired yet.")
-        console.print("  [bold]Pair it in System Settings > Bluetooth[/bold], then re-run the wizard.")
-        console.print("  [dim]You can continue without TX — receiving will still work over BLE.[/dim]")
+        console.print(
+            "  [bold]Pair it in System Settings > Bluetooth[/bold], then re-run the wizard."
+        )
+        console.print(
+            "  [dim]You can continue without TX \u2014 receiving will still work over BLE.[/dim]"
+        )
 
     device = questionary.text(
         "Enter serial device path for TX:",
@@ -289,7 +308,10 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
         return None, 0
 
     console.print("\n[bold]Bluetooth TNC Setup[/bold]")
-    console.print("[dim]Verified devices are marked with \u2713. Others may work but have not been tested.[/dim]")
+    console.print(
+        "[dim]Verified devices are marked with \u2713. "
+        "Others may work but have not been tested.[/dim]"
+    )
     console.print(
         "[dim]Want to help verify a device or add support for one not listed?[/dim]"
     )
@@ -320,15 +342,20 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
         )
         console.print("  In the meantime, you can try one of these options:\n")
         console.print("  [dim]- If your device uses BLE, try 'Other Bluetooth TNC' above[/dim]")
-        console.print("  [dim]- If your device has a USB/serial port, try 'USB Serial TNC' from the main menu[/dim]")
-        console.print("  [dim]- If your device works with Direwolf, try 'KISS TCP' from the main menu[/dim]\n")
+        console.print(
+            "  [dim]- If your device has a USB/serial port, "
+            "try 'USB Serial TNC' from the main menu[/dim]"
+        )
+        console.print(
+            "  [dim]- If your device works with Direwolf, try 'KISS TCP' from the main menu[/dim]\n"
+        )
         proceed = questionary.confirm("Go back to the device list?", default=True).ask()
         if proceed:
             return step_bluetooth_setup(plat)
         return None, 0
 
-    _VERIFIED_BLE = ("ble-uvpro", "ble-tnc4")
-    _VERIFIED_CLASSIC = ()  # none verified yet
+    _VERIFIED_BLE = ("ble-uvpro", "ble-tnc4")  # noqa: N806
+    _VERIFIED_CLASSIC = ()  # none verified yet  # noqa: N806
 
     if tnc_type.startswith("ble"):
         hints = {
@@ -338,15 +365,17 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
         }
 
         if tnc_type not in _VERIFIED_BLE:
+            device_label = hints.get(tnc_type, "selected device")
             console.print(
-                f"\n[yellow]Note:[/yellow] The {hints.get(tnc_type, 'selected device')} has not been "
+                f"\n[yellow]Note:[/yellow] The {device_label} has not been "
                 "verified with this app."
             )
             console.print(
                 "[dim]It may work, but if you run into issues please report them on GitHub.[/dim]"
             )
             console.print(
-                "[dim]If you'd like to send a device for testing, reach out on Ko-fi or GitHub.[/dim]\n"
+                "[dim]If you'd like to send a device for testing, "
+                "reach out on Ko-fi or GitHub.[/dim]\n"
             )
 
         ble_result, _ = _step_ble_setup(plat, device_hint=hints.get(tnc_type, ""))
@@ -376,8 +405,13 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
 
     if plat["system"] == "Darwin":
         # --- macOS classic BT: direct serial connection ---
-        console.print("\n[bold]Step 1:[/bold] Make sure your TNC is paired in System Settings > Bluetooth")
-        console.print("[bold]Step 2:[/bold] Close any other apps connected to the TNC (only one BT connection at a time)\n")
+        console.print(
+            "\n[bold]Step 1:[/bold] Make sure your TNC is paired in System Settings > Bluetooth"
+        )
+        console.print(
+            "[bold]Step 2:[/bold] Close any other apps connected to the TNC "
+            "(only one BT connection at a time)\n"
+        )
 
         # Auto-detect BT serial devices
         import glob
@@ -409,7 +443,9 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
                 device = selected
         else:
             console.print("  [yellow]No BT TNC devices found.[/yellow]")
-            console.print("  [dim]Make sure your TNC is paired in System Settings > Bluetooth[/dim]")
+            console.print(
+                "  [dim]Make sure your TNC is paired in System Settings > Bluetooth[/dim]"
+            )
             device = questionary.text("Enter device path:", default="/dev/cu.").ask()
             if device is None:
                 raise KeyboardInterrupt
@@ -420,13 +456,13 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
             import serial
             s = serial.Serial(device, 9600, timeout=2)
             s.close()
-            console.print(f"  [green]\u2713[/green] Device opened successfully!")
+            console.print("  [green]\u2713[/green] Device opened successfully!")
         except Exception as e:
             console.print(f"  [yellow]![/yellow] Could not open device: {e}")
             console.print("  [dim]The TNC may not be powered on or paired.[/dim]")
             proceed = questionary.confirm("Save this config anyway?", default=True).ask()
             if not proceed:
-                raise KeyboardInterrupt
+                raise KeyboardInterrupt from None
 
         baud = 9600
         return device, baud
@@ -670,7 +706,9 @@ def _step_digirig_setup(config: AppConfig) -> AppConfig:
     dw_bin = shutil.which("direwolf")
     if not dw_bin:
         if system == "Darwin":
-            candidates = ["/opt/local/bin/direwolf", "/opt/homebrew/bin/direwolf", "/usr/local/bin/direwolf"]
+            candidates = [
+                "/opt/local/bin/direwolf", "/opt/homebrew/bin/direwolf", "/usr/local/bin/direwolf"
+            ]
         elif system == "Linux":
             candidates = ["/usr/bin/direwolf", "/usr/local/bin/direwolf"]
         else:
@@ -710,7 +748,7 @@ def _step_digirig_setup(config: AppConfig) -> AppConfig:
     # Write direwolf.conf
     if dw_conf_path.exists():
         shutil.copy2(dw_conf_path, str(dw_conf_path) + ".bak")
-        console.print(f"\n  [dim]Backed up existing direwolf.conf[/dim]")
+        console.print("\n  [dim]Backed up existing direwolf.conf[/dim]")
 
     dw_conf_path.write_text(f"""\
 # Direwolf config for {platform_label} + DigiRig
@@ -833,6 +871,7 @@ def step_connection_type(config: AppConfig) -> AppConfig:
     console.print("\nScanning for KISS TNC servers on your network (3s)...")
 
     import asyncio
+
     from aprs_tui.discovery.mdns import discover_kiss_servers
 
     try:
@@ -860,7 +899,9 @@ def step_connection_type(config: AppConfig) -> AppConfig:
     else:
         console.print("  [dim]No KISS TNC servers found via mDNS.[/dim]")
         console.print("  [dim]To enable auto-discovery, on your Direwolf host run:[/dim]")
-        console.print("  [dim]  Linux: avahi-publish-service \"Direwolf KISS\" _kiss-tnc._tcp 8001 &[/dim]")
+        console.print(
+            "  [dim]  Linux: avahi-publish-service \"Direwolf KISS\" _kiss-tnc._tcp 8001 &[/dim]"
+        )
         console.print("  [dim]  macOS: dns-sd -R \"Direwolf KISS\" _kiss-tnc._tcp . 8001 &[/dim]\n")
 
     # Manual entry if no server was selected via mDNS
@@ -892,7 +933,7 @@ def step_connection_type(config: AppConfig) -> AppConfig:
             "Save this configuration anyway?", default=True
         ).ask()
         if not proceed:
-            raise KeyboardInterrupt
+            raise KeyboardInterrupt from None
 
     return config.model_copy(
         update={
@@ -951,8 +992,12 @@ def step_station(config: AppConfig) -> AppConfig:
     console.print("[dim]  - Position beaconing (if enabled later)[/dim]")
     console.print("[dim]Tip: search your address at latlong.net[/dim]\n")
 
-    default_lat = config.station.latitude if config.station.latitude != 0.0 else config.beacon.latitude
-    default_lon = config.station.longitude if config.station.longitude != 0.0 else config.beacon.longitude
+    default_lat = (
+        config.station.latitude if config.station.latitude != 0.0 else config.beacon.latitude
+    )
+    default_lon = (
+        config.station.longitude if config.station.longitude != 0.0 else config.beacon.longitude
+    )
 
     lat_str = questionary.text(
         "Latitude (decimal degrees, e.g. 45.5):",
@@ -1008,8 +1053,12 @@ def step_beacon(config: AppConfig) -> AppConfig:
         interval = max(int(interval_str), 60)
 
         # Default to station position, allow override for beacon
-        default_lat = config.beacon.latitude if config.beacon.latitude != 0.0 else config.station.latitude
-        default_lon = config.beacon.longitude if config.beacon.longitude != 0.0 else config.station.longitude
+        default_lat = (
+            config.beacon.latitude if config.beacon.latitude != 0.0 else config.station.latitude
+        )
+        default_lon = (
+            config.beacon.longitude if config.beacon.longitude != 0.0 else config.station.longitude
+        )
 
         if default_lat != 0.0 and default_lon != 0.0:
             console.print(f"  [dim]Using station position: {default_lat}, {default_lon}[/dim]")
@@ -1101,13 +1150,19 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
     console.print("[dim]Without a filter, you may receive no packets.[/dim]\n")
 
     # Auto-generate filter from station position
-    stn_lat = config.station.latitude if config.station.latitude != 0.0 else config.beacon.latitude
-    stn_lon = config.station.longitude if config.station.longitude != 0.0 else config.beacon.longitude
+    stn_lat = (
+        config.station.latitude if config.station.latitude != 0.0 else config.beacon.latitude
+    )
+    stn_lon = (
+        config.station.longitude if config.station.longitude != 0.0 else config.beacon.longitude
+    )
     existing_filter = config.aprs_is.filter
     # Regenerate if no filter, or if it references 0.0/0.0 (stale coords)
     if stn_lat != 0.0 and (not existing_filter or "0.0/0.0" in existing_filter):
         default_filter = f"r/{stn_lat}/{stn_lon}/100"
-        console.print(f"  [green]Auto-generated from your station position:[/green] {default_filter}")
+        console.print(
+            f"  [green]Auto-generated from your station position:[/green] {default_filter}"
+        )
     else:
         default_filter = existing_filter
 
@@ -1115,19 +1170,19 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
         "How would you like to set the filter?",
         choices=[
             questionary.Choice(
-                f"Radius from my position (100km)",
+                "Radius from my position (100km)",
                 value="radius_100",
             ),
             questionary.Choice(
-                f"Radius from my position (200km)",
+                "Radius from my position (200km)",
                 value="radius_200",
             ),
             questionary.Choice(
-                f"Radius from my position (500km)",
+                "Radius from my position (500km)",
                 value="radius_500",
             ),
             questionary.Choice(
-                f"Only my callsign traffic",
+                "Only my callsign traffic",
                 value="mycall",
             ),
             questionary.Choice(
@@ -1169,8 +1224,13 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
         ).ask() or ""
 
     if lat == 0.0 and lon == 0.0 and filter_choice.startswith("radius"):
-        console.print("\n  [yellow]Warning: Your position is 0,0. Set your position in station config first.[/yellow]")
-        console.print("  [dim]The radius filter won't work correctly without a valid position.[/dim]")
+        console.print(
+            "\n  [yellow]Warning: Your position is 0,0. "
+            "Set your position in station config first.[/yellow]"
+        )
+        console.print(
+            "  [dim]The radius filter won't work correctly without a valid position.[/dim]"
+        )
 
     console.print(f"\n  Filter: [bold]{filter_str}[/bold]")
 
@@ -1203,13 +1263,15 @@ def step_write_config(config: AppConfig, config_path: Path) -> None:
     else:
         position_str = "Not set"
 
+    tx_serial_line = (
+        f"\nTX Serial: {config.server.serial_device}" if config.server.serial_device else ""
+    )
     summary = f"""[bold]Configuration Summary[/bold]
 
 Callsign:  {callsign}
 Position:  {position_str}
 Symbol:    {config.station.symbol_table}{config.station.symbol_code}
-Server:    {config.server.host}:{config.server.port} ({config.server.protocol}){f"""
-TX Serial: {config.server.serial_device}""" if config.server.serial_device else ""}
+Server:    {config.server.host}:{config.server.port} ({config.server.protocol}){tx_serial_line}
 Beacon:    {beacon_status}
 APRS-IS:   {aprs_is_status}"""
 

@@ -8,6 +8,7 @@ Issue #42: PacketLogger - file logging subscriber for raw packets.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import datetime
 from pathlib import Path
 
@@ -49,14 +50,10 @@ class PacketBus:
                 queue.put_nowait(packet)
             except asyncio.QueueFull:
                 # Drop oldest, add new
-                try:
+                with contextlib.suppress(asyncio.QueueEmpty):
                     queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-                try:
+                with contextlib.suppress(asyncio.QueueFull):
                     queue.put_nowait(packet)
-                except asyncio.QueueFull:
-                    pass
                 self._subscribers[queue] = self._subscribers.get(queue, 0) + 1
 
     def dropped_count(self, queue: asyncio.Queue[APRSPacket]) -> int:
@@ -98,7 +95,7 @@ class PacketLogger:
             self._file.close()
         self._current_date = date
         log_path = self._log_dir / f"packets-{date}.log"
-        self._file = open(log_path, "a")
+        self._file = open(log_path, "a")  # noqa: SIM115
 
     def close(self) -> None:
         """Close the current log file."""

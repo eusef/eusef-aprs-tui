@@ -6,7 +6,6 @@ from textual.widgets import RichLog
 
 from aprs_tui.protocol.types import APRSPacket
 
-
 # Color map for packet types
 PACKET_COLORS = {
     "position": "#58a6ff",    # blue
@@ -219,8 +218,7 @@ class StreamPanel(RichLog):
             text.append(f'  "{pkt.object_name}"', style=color)
         elif pkt.info_type == "status":
             text.append(f'  "{pkt.status_text}"', style=color)
-        elif pkt.info_type == "telemetry":
-            if pkt.telemetry_values:
-                text.append(f"  #{pkt.telemetry_seq} {pkt.telemetry_values}", style=color)
+        elif pkt.info_type == "telemetry" and pkt.telemetry_values:
+            text.append(f"  #{pkt.telemetry_seq} {pkt.telemetry_values}", style=color)
 
         return text

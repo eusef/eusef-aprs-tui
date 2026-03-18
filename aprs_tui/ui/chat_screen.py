@@ -1,16 +1,17 @@
 """Chat screen - isolated conversation view with a single station."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import contextlib
 import time
+from dataclasses import dataclass, field
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.message import Message
 from textual.containers import Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Input, Static, RichLog
-from rich.text import Text
+from textual.widgets import Input, RichLog, Static
 
 
 @dataclass
@@ -32,7 +33,7 @@ class ChatMessage:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ChatMessage":
+    def from_dict(cls, d: dict) -> ChatMessage:
         return cls(
             direction=d.get("direction", "received"),
             text=d.get("text", ""),
@@ -107,7 +108,8 @@ class ChatScreen(ModalScreen[None]):
             )
 
     def on_mount(self) -> None:
-        self.query_one("#chat-outer").border_title = f" Chat: {self.own_callsign} ↔ {self.peer_callsign} "
+        title = f" Chat: {self.own_callsign} \u2194 {self.peer_callsign} "
+        self.query_one("#chat-outer").border_title = title
         # Render any pre-loaded history
         for msg in self.messages:
             self._render_message(msg)
@@ -121,10 +123,8 @@ class ChatScreen(ModalScreen[None]):
         )
         self.messages.append(msg)
         # Only render if the screen is mounted (widgets exist)
-        try:
-            self._render_message(msg)
-        except Exception:
-            pass  # Not mounted yet - will render in on_mount
+        with contextlib.suppress(Exception):
+            self._render_message(msg)  # Not mounted yet - will render in on_mount
 
     def update_message_state(self, msg_id: str, new_state: str) -> None:
         """Update state of a sent message and re-render."""
@@ -132,10 +132,8 @@ class ChatScreen(ModalScreen[None]):
             if msg.msg_id == msg_id:
                 msg.state = new_state
                 break
-        try:
+        with contextlib.suppress(Exception):
             self._rerender()
-        except Exception:
-            pass
 
     def _render_message(self, msg: ChatMessage) -> None:
         """Render a single chat message."""

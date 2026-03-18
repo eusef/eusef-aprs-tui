@@ -21,7 +21,6 @@ import pytest
 
 from aprs_tui.transport import ConnectionState, KissTcpTransport
 
-
 # ==========================================================================
 # Connection lifecycle
 # ==========================================================================
@@ -85,7 +84,9 @@ class TestKissTcpConnect:
 class TestKissTcpReceive:
     """Reading KISS frames from the TCP connection."""
 
-    async def test_receive_single_frame(self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames):
+    async def test_receive_single_frame(
+        self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames
+    ):
         """A single KISS frame sent by the server is received and deframed."""
         transport = KissTcpTransport(kiss_tcp_server["host"], kiss_tcp_server["port"])
         await transport.connect()
@@ -97,7 +98,9 @@ class TestKissTcpReceive:
         finally:
             await transport.disconnect()
 
-    async def test_receive_multiple_frames(self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames):
+    async def test_receive_multiple_frames(
+        self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames
+    ):
         """Multiple concatenated KISS frames are each received individually."""
         transport = KissTcpTransport(kiss_tcp_server["host"], kiss_tcp_server["port"])
         await transport.connect()
@@ -114,7 +117,9 @@ class TestKissTcpReceive:
         finally:
             await transport.disconnect()
 
-    async def test_receive_fragmented_frame(self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames):
+    async def test_receive_fragmented_frame(
+        self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames
+    ):
         """A KISS frame split across two TCP reads is reassembled correctly."""
         transport = KissTcpTransport(kiss_tcp_server["host"], kiss_tcp_server["port"])
         await transport.connect()
@@ -217,7 +222,9 @@ class TestKissTcpSend:
 class TestKissTcpPipeline:
     """End-to-end: TCP receive -> KISS deframe -> AX.25 decode -> aprslib parse."""
 
-    async def test_full_pipeline_position_packet(self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames):
+    async def test_full_pipeline_position_packet(
+        self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames
+    ):
         """A KISS-framed position packet received over TCP is decoded to APRSPacket
         with info_type='position' and valid lat/lon."""
         from aprs_tui.protocol.ax25 import ax25_decode, ax25_to_text
@@ -243,7 +250,9 @@ class TestKissTcpPipeline:
         finally:
             await transport.disconnect()
 
-    async def test_full_pipeline_message_packet(self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames):
+    async def test_full_pipeline_message_packet(
+        self, kiss_tcp_server, sample_kiss_frames, sample_ax25_frames
+    ):
         """A KISS-framed message packet is decoded with correct addressee and text."""
         from aprs_tui.protocol.ax25 import ax25_decode, ax25_to_text
         from aprs_tui.protocol.decoder import decode_packet

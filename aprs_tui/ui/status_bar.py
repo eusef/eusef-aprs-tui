@@ -1,8 +1,8 @@
 """Status bar widget showing connection state, callsign, and counters."""
 from __future__ import annotations
 
-from textual.widgets import Static
 from rich.text import Text
+from textual.widgets import Static
 
 from aprs_tui.transport.base import ConnectionState
 

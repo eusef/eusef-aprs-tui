@@ -29,9 +29,8 @@ class DeduplicationFilter:
         if len(self._seen) > 1000:
             self._cleanup(now)
 
-        if key in self._seen:
-            if now - self._seen[key] < self._window:
-                return True  # Duplicate within window
+        if key in self._seen and now - self._seen[key] < self._window:
+            return True  # Duplicate within window
 
         self._seen[key] = now
         return False

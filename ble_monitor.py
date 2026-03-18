@@ -13,12 +13,11 @@ Usage:
 
 Press Ctrl+C to stop.
 """
-import asyncio
 import argparse
-import sys
+import asyncio
 from datetime import datetime
 
-from bleak import BleakScanner, BleakClient
+from bleak import BleakClient, BleakScanner
 
 # --- Colors ---
 RESET = "\033[0m"
@@ -171,7 +170,7 @@ async def connect_and_enumerate(address):
     notify_chars = []
 
     print(f"{BOLD}{'=' * 60}")
-    print(f"  GATT Services & Characteristics")
+    print("  GATT Services & Characteristics")
     print(f"{'=' * 60}{RESET}\n")
 
     for service in client.services:
@@ -214,8 +213,8 @@ async def connect_and_enumerate(address):
 async def monitor(client, notify_chars):
     """Subscribe to all notify characteristics and display incoming data."""
     print(f"{BOLD}{'=' * 60}")
-    print(f"  Monitoring all BLE notifications")
-    print(f"  Press Ctrl+C to stop")
+    print("  Monitoring all BLE notifications")
+    print("  Press Ctrl+C to stop")
     print(f"{'=' * 60}{RESET}\n")
 
     notification_count = 0
@@ -230,7 +229,13 @@ async def monitor(client, notify_chars):
             hex_str = data.hex(" ") if len(data) <= 40 else data[:40].hex(" ") + "..."
             ascii_str = printable_ascii(data)
 
-            print(f"{DIM}[{ts}]{RESET} {CYAN}Char {str(char_uuid)[:8]}...{RESET} {MAGENTA}+{len(data)}B{RESET}")
+            char_prefix = str(char_uuid)[:8]
+            data_len = len(data)
+            print(
+                f"{DIM}[{ts}]{RESET}"
+                f" {CYAN}Char {char_prefix}...{RESET}"
+                f" {MAGENTA}+{data_len}B{RESET}"
+            )
             print(f"  hex:   {hex_str}")
             print(f"  ascii: {ascii_str}")
 
@@ -260,7 +265,8 @@ async def monitor(client, notify_chars):
                     continue
                 frame_count += 1
                 cmd = raw[0]
-                print(f"\n  {GREEN}{BOLD}*** KISS FRAME #{frame_count} (cmd=0x{cmd:02X}, {len(raw)}B) ***{RESET}")
+                frame_hdr = f"*** KISS FRAME #{frame_count} (cmd=0x{cmd:02X}, {len(raw)}B) ***"
+                print(f"\n  {GREEN}{BOLD}{frame_hdr}{RESET}")
                 if cmd == 0x00 and len(raw) > 1:
                     payload = kiss_destuff(bytes(raw[1:]))
                     decoded = decode_ax25(payload)
@@ -281,7 +287,7 @@ async def monitor(client, notify_chars):
         except Exception as e:
             print(f"{RED}Failed to subscribe to {char.uuid}: {e}{RESET}")
 
-    print(f"\nListening...\n")
+    print("\nListening...\n")
 
     # Keep running until Ctrl+C
     try:
@@ -302,7 +308,7 @@ async def main():
     args = parser.parse_args()
 
     print(f"{BOLD}{'=' * 60}")
-    print(f"  UV-PRO BLE Monitor")
+    print("  UV-PRO BLE Monitor")
     print(f"{'=' * 60}{RESET}")
     print(f"  Started: {datetime.now().strftime('%H:%M:%S')}")
     print()
@@ -321,7 +327,8 @@ async def main():
             print(f"{GREEN}Found UV-PRO candidate: {address}{RESET}")
         else:
             # Ask user to pick
-            addr = input(f"\n{YELLOW}Enter BLE address to connect to (or 'q' to quit): {RESET}").strip()
+            prompt = f"\n{YELLOW}Enter BLE address to connect to (or 'q' to quit): {RESET}"
+            addr = input(prompt).strip()
             if addr.lower() == "q":
                 return
             address = addr
@@ -333,7 +340,7 @@ async def main():
 
     if not notify_chars:
         print(f"{YELLOW}No notify characteristics found -- nothing to monitor.{RESET}")
-        print(f"The service list above shows what the device exposes.")
+        print("The service list above shows what the device exposes.")
         await client.disconnect()
         return
 

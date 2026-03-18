@@ -19,7 +19,6 @@ from pydantic import ValidationError
 
 from aprs_tui.config import AppConfig, default_config_path
 
-
 # ==========================================================================
 # Config loading
 # ==========================================================================
@@ -139,7 +138,10 @@ class TestConfigValidation:
     def test_beacon_interval_minimum(self, config_factory):
         """Beacon interval must be >= 60 seconds (APRS minimum)."""
         data = config_factory(
-            beacon={"enabled": False, "interval": 30, "latitude": 0.0, "longitude": 0.0, "comment": ""}
+            beacon={
+                "enabled": False, "interval": 30,
+                "latitude": 0.0, "longitude": 0.0, "comment": "",
+            },
         )
         with pytest.raises(ValidationError):
             AppConfig.model_validate(data)
@@ -147,12 +149,18 @@ class TestConfigValidation:
     def test_latitude_range_validated(self, config_factory):
         """Latitude must be -90 to 90."""
         data = config_factory(
-            beacon={"enabled": False, "interval": 600, "latitude": 91.0, "longitude": 0.0, "comment": ""}
+            beacon={
+                "enabled": False, "interval": 600,
+                "latitude": 91.0, "longitude": 0.0, "comment": "",
+            }
         )
         with pytest.raises(ValidationError):
             AppConfig.model_validate(data)
         data = config_factory(
-            beacon={"enabled": False, "interval": 600, "latitude": -91.0, "longitude": 0.0, "comment": ""}
+            beacon={
+                "enabled": False, "interval": 600,
+                "latitude": -91.0, "longitude": 0.0, "comment": "",
+            }
         )
         with pytest.raises(ValidationError):
             AppConfig.model_validate(data)
@@ -160,12 +168,18 @@ class TestConfigValidation:
     def test_longitude_range_validated(self, config_factory):
         """Longitude must be -180 to 180."""
         data = config_factory(
-            beacon={"enabled": False, "interval": 600, "latitude": 0.0, "longitude": 181.0, "comment": ""}
+            beacon={
+                "enabled": False, "interval": 600,
+                "latitude": 0.0, "longitude": 181.0, "comment": "",
+            }
         )
         with pytest.raises(ValidationError):
             AppConfig.model_validate(data)
         data = config_factory(
-            beacon={"enabled": False, "interval": 600, "latitude": 0.0, "longitude": -181.0, "comment": ""}
+            beacon={
+                "enabled": False, "interval": 600,
+                "latitude": 0.0, "longitude": -181.0, "comment": "",
+            }
         )
         with pytest.raises(ValidationError):
             AppConfig.model_validate(data)

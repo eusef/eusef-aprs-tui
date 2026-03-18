@@ -1,5 +1,6 @@
 """mDNS service discovery for KISS TNC servers."""
 from __future__ import annotations
+
 import asyncio
 import logging
 import socket
@@ -30,8 +31,7 @@ async def discover_kiss_servers(timeout: float = 3.0) -> list[DiscoveredService]
         timeout: Browse duration in seconds (default 3.0)
     """
     try:
-        from zeroconf import Zeroconf, ServiceBrowser
-        from zeroconf import ServiceStateChange
+        from zeroconf import ServiceBrowser, Zeroconf
     except ImportError:
         logger.debug("zeroconf not installed, skipping mDNS discovery")
         return []
@@ -84,5 +84,5 @@ async def _test_tcp(host: str, port: int, timeout: float = 2.0) -> bool:
         writer.close()
         await writer.wait_closed()
         return True
-    except (ConnectionRefusedError, OSError, TimeoutError, asyncio.TimeoutError):
+    except (ConnectionRefusedError, OSError, TimeoutError):
         return False

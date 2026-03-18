@@ -2,10 +2,11 @@
 """Test the actual AprsIsTransport + ConnectionManager pipeline."""
 import asyncio
 import sys
+
 sys.path.insert(0, ".")
 
-from aprs_tui.transport.aprs_is import AprsIsTransport
 from aprs_tui.core.connection import ConnectionManager
+from aprs_tui.transport.aprs_is import AprsIsTransport
 
 count = 0
 

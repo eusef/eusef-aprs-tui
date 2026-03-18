@@ -26,7 +26,8 @@ print()
 print("Listening for packets (20 seconds)...")
 print()
 
-import time
+import time  # noqa: E402
+
 start = time.time()
 count = 0
 while time.time() - start < 20:
@@ -41,7 +42,7 @@ while time.time() - start < 20:
             else:
                 count += 1
                 print(f"  [{count}] {line[:100]}")
-    except socket.timeout:
+    except TimeoutError:
         pass
 
 print(f"\nReceived {count} packets in 20 seconds")

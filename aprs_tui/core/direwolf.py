@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-import signal
 import subprocess
 from pathlib import Path
 
@@ -77,15 +76,14 @@ class DirewolfManager:
         logger.info("Starting Direwolf: %s -c %s", self._direwolf_bin, self._config_path)
 
         # Open log file for stdout/stderr
-        log_file = open(self._log_path, "a")
-
-        self._process = subprocess.Popen(
-            [self._direwolf_bin, "-c", str(self._config_path), "-t", "0"],
-            stdout=log_file,
-            stderr=log_file,
-            # Start in its own process group so we can kill it cleanly
-            preexec_fn=None,
-        )
+        with open(self._log_path, "a") as log_file:
+            self._process = subprocess.Popen(
+                [self._direwolf_bin, "-c", str(self._config_path), "-t", "0"],
+                stdout=log_file,
+                stderr=log_file,
+                # Start in its own process group so we can kill it cleanly
+                preexec_fn=None,
+            )
 
         logger.info("Direwolf started (pid %d), log: %s", self._process.pid, self._log_path)
 
@@ -123,7 +121,8 @@ class DirewolfManager:
         deadline = asyncio.get_event_loop().time() + timeout
         while asyncio.get_event_loop().time() < deadline:
             if not self.is_running:
-                logger.error("Direwolf exited unexpectedly (exit code: %s)", self._process.returncode if self._process else "?")
+                exit_code = self._process.returncode if self._process else "?"
+                logger.error("Direwolf exited unexpectedly (exit code: %s)", exit_code)
                 return False
 
             try:
@@ -135,7 +134,7 @@ class DirewolfManager:
                 await writer.wait_closed()
                 logger.info("Direwolf KISS port %d is ready", kiss_port)
                 return True
-            except (ConnectionRefusedError, OSError, asyncio.TimeoutError):
+            except (TimeoutError, ConnectionRefusedError, OSError):
                 await asyncio.sleep(0.5)
 
         logger.error("Direwolf KISS port %d not ready after %.0fs", kiss_port, timeout)

@@ -25,13 +25,12 @@ import pytest
 
 from aprs_tui.protocol.ax25 import (
     AX25Frame,
-    decode_address,
-    encode_address,
     ax25_decode,
     ax25_encode,
     ax25_to_text,
+    decode_address,
+    encode_address,
 )
-
 
 # ==========================================================================
 # AX.25 address parsing

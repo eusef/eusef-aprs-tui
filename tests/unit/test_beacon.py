@@ -15,13 +15,9 @@ The beacon module:
 """
 from __future__ import annotations
 
-import asyncio
-
 import aprslib
-import pytest
 
 from aprs_tui.core.beacon import BeaconManager
-
 
 # ==========================================================================
 # Beacon interval

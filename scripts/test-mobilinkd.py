@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Quick test: read raw bytes from Mobilinkd BT serial."""
-import serial
 import time
+
+import serial
 
 DEVICE = "/dev/cu.usbmodem2082336543461"
 

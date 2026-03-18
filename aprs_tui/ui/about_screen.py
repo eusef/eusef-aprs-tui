@@ -6,13 +6,11 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
-from rich.text import Text
-
 
 VERSION = "0.1.0"
 
-ABOUT_TEXT = """\
-[bold #58a6ff]APRS TUI[/bold #58a6ff] [dim]v{version}[/dim]
+ABOUT_TEXT = f"""\
+[bold #58a6ff]APRS TUI[/bold #58a6ff] [dim]v{VERSION}[/dim]
 
 A terminal user interface for APRS (Automatic Packet Reporting System).
 Built for ham radio operators who prefer the command line.
@@ -38,7 +36,7 @@ Built for ham radio operators who prefer the command line.
 
 [bold]Built With[/bold]
   This application was built with the assistance of Claude (Anthropic).
-""".format(version=VERSION)
+"""
 
 LIBRARIES = [
     ("Textual", "8.1.1", "MIT", "Terminal UI framework", "https://github.com/Textualize/textual"),
@@ -125,9 +123,8 @@ class AboutScreen(ModalScreen[None]):
     def _build_library_table(self) -> str:
         """Build the library table as Rich markup."""
         lines = ["[bold]Open Source Libraries[/bold]\n"]
-        lines.append(
-            f"  [bold #8b949e]{'Library':<16s}{'Version':<10s}{'License':<12s}Description[/bold #8b949e]"
-        )
+        header = f"{'Library':<16s}{'Version':<10s}{'License':<12s}Description"
+        lines.append(f"  [bold #8b949e]{header}[/bold #8b949e]")
         lines.append(f"  [dim]{'─' * 68}[/dim]")
 
         for name, version, license_, desc, url in LIBRARIES:

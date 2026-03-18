@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from aprs_tui.core.packet_bus import PacketBus
 from aprs_tui.protocol.types import APRSPacket
 

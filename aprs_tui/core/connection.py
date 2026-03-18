@@ -4,12 +4,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Callable
+from collections.abc import Callable
 
-from aprs_tui.transport.base import Transport, ConnectionState
 from aprs_tui.protocol.ax25 import ax25_decode, ax25_to_text
 from aprs_tui.protocol.decoder import decode_packet
 from aprs_tui.protocol.types import APRSPacket
+from aprs_tui.transport.base import ConnectionState, Transport
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,11 @@ class ConnectionManager:
                         text_line = ax25_to_text(ax25)
                         pkt = decode_packet(text_line, transport=self._transport.display_name)
                 except Exception:
-                    raw_display = raw_frame.decode("latin-1", errors="replace") if is_text_transport else raw_frame.hex()
+                    raw_display = (
+                        raw_frame.decode("latin-1", errors="replace")
+                        if is_text_transport
+                        else raw_frame.hex()
+                    )
                     pkt = APRSPacket(
                         raw=raw_display,
                         parse_error="Decode failed",

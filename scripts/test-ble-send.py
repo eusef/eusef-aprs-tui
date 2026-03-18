@@ -2,6 +2,7 @@
 """Test sending a KISS frame to Mobilinkd TNC4 via BLE."""
 import asyncio
 import sys
+
 sys.path.insert(0, ".")
 
 from bleak import BleakClient
@@ -11,9 +12,9 @@ KISS_TX_CHAR = "00000003-ba2a-46c9-ae49-01b0961f68bb"  # TNC→App (notify)
 KISS_RX_CHAR = "00000002-ba2a-46c9-ae49-01b0961f68bb"  # App→TNC (write)
 
 # Build a test APRS message packet
-from aprs_tui.protocol.encoder import encode_message
-from aprs_tui.protocol.ax25 import ax25_encode
-from aprs_tui.protocol.kiss import kiss_frame
+from aprs_tui.protocol.ax25 import ax25_encode  # noqa: E402
+from aprs_tui.protocol.encoder import encode_message  # noqa: E402
+from aprs_tui.protocol.kiss import kiss_frame  # noqa: E402
 
 CALLSIGN = "W7PDJ-14"
 DEST_CALL = "W7PDJ-7"

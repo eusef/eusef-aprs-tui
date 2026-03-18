@@ -21,14 +21,12 @@ Reconnect behavior:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
-
-import pytest
 
 from aprs_tui.core.connection import ConnectionManager
 from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_tcp import KissTcpTransport
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,10 +34,10 @@ from aprs_tui.transport.kiss_tcp import KissTcpTransport
 
 def _make_kiss_frame(ax25_payload: bytes) -> bytes:
     """Wrap an AX.25 payload in a KISS frame (FEND + CMD + data + FEND)."""
-    FEND = 0xC0
-    FESC = 0xDB
-    TFEND = 0xDC
-    TFESC = 0xDD
+    FEND = 0xC0  # noqa: N806
+    FESC = 0xDB  # noqa: N806
+    TFEND = 0xDC  # noqa: N806
+    TFESC = 0xDD  # noqa: N806
     stuffed = bytearray()
     for b in ax25_payload:
         if b == FEND:
@@ -238,10 +236,8 @@ class TestConnectionStateMachine:
             mgr._running = False
             mgr._stop_tasks()
             connect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await connect_task
-            except asyncio.CancelledError:
-                pass
 
     async def test_disconnect_from_connected(self, kiss_tcp_server):
         """Calling disconnect() from CONNECTED goes to DISCONNECTED."""
@@ -324,7 +320,9 @@ class TestReconnect:
         try:
             # Wait for reconnect cycle
             await asyncio.wait_for(
-                _wait_for_state_after(mgr, states, ConnectionState.RECONNECTING, ConnectionState.CONNECTED),
+                _wait_for_state_after(
+                    mgr, states, ConnectionState.RECONNECTING, ConnectionState.CONNECTED
+                ),
                 timeout=15.0,
             )
             assert mgr.state == ConnectionState.CONNECTED
@@ -414,10 +412,8 @@ class TestReconnect:
             mgr._running = False
             mgr._stop_tasks()
             connect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await connect_task
-            except asyncio.CancelledError:
-                pass
 
     async def test_reconnect_max_attempts_finite(self):
         """max_reconnect_attempts=2 stops after 2 failed attempts."""
@@ -449,10 +445,8 @@ class TestReconnect:
             mgr._running = False
             mgr._stop_tasks()
             connect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await connect_task
-            except asyncio.CancelledError:
-                pass
 
     async def test_reconnect_resets_counter_on_success(self):
         """After a successful reconnect, the attempt counter resets to 0."""
@@ -478,7 +472,9 @@ class TestReconnect:
         try:
             # Wait for successful reconnect
             await asyncio.wait_for(
-                _wait_for_state_after(mgr, states, ConnectionState.RECONNECTING, ConnectionState.CONNECTED),
+                _wait_for_state_after(
+                    mgr, states, ConnectionState.RECONNECTING, ConnectionState.CONNECTED
+                ),
                 timeout=15.0,
             )
             assert mgr.state == ConnectionState.CONNECTED
@@ -511,7 +507,9 @@ class TestReconnect:
 
         try:
             await asyncio.wait_for(
-                _wait_for_state_after(mgr, states, ConnectionState.RECONNECTING, ConnectionState.CONNECTED),
+                _wait_for_state_after(
+                    mgr, states, ConnectionState.RECONNECTING, ConnectionState.CONNECTED
+                ),
                 timeout=15.0,
             )
 
@@ -663,10 +661,8 @@ class TestConnectionFailures:
             mgr._running = False
             mgr._stop_tasks()
             connect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await connect_task
-            except asyncio.CancelledError:
-                pass
 
     async def test_connect_dns_failure(self):
         """Connection to a non-resolving hostname transitions to RECONNECTING or FAILED."""
@@ -691,10 +687,8 @@ class TestConnectionFailures:
             mgr._running = False
             mgr._stop_tasks()
             connect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await connect_task
-            except asyncio.CancelledError:
-                pass
 
     async def test_connect_timeout_slow_server(self):
         """Connection to a server that accepts but never responds times out."""

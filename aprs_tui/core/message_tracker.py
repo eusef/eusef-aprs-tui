@@ -1,13 +1,14 @@
 """APRS message tracking with ack/retry logic and inbound filtering."""
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Awaitable
 
-from aprs_tui.protocol.encoder import encode_message, encode_ack
+from aprs_tui.protocol.encoder import encode_ack, encode_message
 from aprs_tui.protocol.types import APRSPacket
 
 logger = logging.getLogger(__name__)

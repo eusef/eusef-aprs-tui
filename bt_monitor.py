@@ -13,10 +13,11 @@ Defaults: /dev/cu.UV-PRO  9600
 
 Press Ctrl+C to stop.
 """
-import serial
 import sys
 import time
 from datetime import datetime
+
+import serial
 
 # --- Config ---
 DEVICE = sys.argv[1] if len(sys.argv) > 1 else "/dev/cu.UV-PRO"
@@ -120,7 +121,7 @@ def main():
         sys.exit(1)
 
     print(f"{GREEN}CONNECTED{RESET} to {ser.name}")
-    print(f"Waiting for data... everything received will be displayed.\n")
+    print("Waiting for data... everything received will be displayed.\n")
 
     buf = bytearray()
     total_bytes = 0

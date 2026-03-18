@@ -17,19 +17,16 @@ KISS protocol reference:
 """
 from __future__ import annotations
 
-import pytest
-
 from aprs_tui.protocol.kiss import (
+    CMD_DATA,
     FEND,
     FESC,
     TFEND,
     TFESC,
-    CMD_DATA,
-    kiss_frame,
-    kiss_deframe,
     KissDeframer,
+    kiss_deframe,
+    kiss_frame,
 )
-
 
 # ==========================================================================
 # KISS deframing (raw bytes -> AX.25 payload)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from aprs_tui.protocol.types import APRSPacket
 
@@ -25,7 +25,7 @@ class StationRecord:
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate great-circle distance in kilometers between two points."""
-    R = 6371.0  # Earth radius in km
+    R = 6371.0  # Earth radius in km  # noqa: N806
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(

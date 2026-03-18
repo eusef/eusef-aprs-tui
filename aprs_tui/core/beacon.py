@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
-from aprs_tui.protocol.encoder import encode_position, build_packet
 from aprs_tui.protocol.ax25 import ax25_encode
+from aprs_tui.protocol.encoder import build_packet, encode_position
 from aprs_tui.protocol.kiss import kiss_frame
 
 logger = logging.getLogger(__name__)

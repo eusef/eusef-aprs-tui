@@ -17,13 +17,8 @@ The station tracker maintains a table of all heard stations with:
 """
 from __future__ import annotations
 
-import time
-
-import pytest
-
-from aprs_tui.core.station_tracker import StationTracker, haversine, calc_bearing
+from aprs_tui.core.station_tracker import StationTracker, haversine
 from aprs_tui.protocol.types import APRSPacket
-
 
 # ==========================================================================
 # Station add and update

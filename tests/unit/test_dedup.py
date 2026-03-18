@@ -16,11 +16,8 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from aprs_tui.core.dedup import DeduplicationFilter
 from aprs_tui.protocol.types import APRSPacket
-
 
 # ==========================================================================
 # Basic dedup logic

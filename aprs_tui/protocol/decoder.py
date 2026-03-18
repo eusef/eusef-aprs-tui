@@ -7,13 +7,13 @@ Wraps ``aprslib.parse()`` and normalises the result dict into a frozen
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import contextlib
+from datetime import UTC, datetime
 from typing import Any
 
 import aprslib
 
 from aprs_tui.protocol.types import APRSPacket
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -203,10 +203,8 @@ def _telemetry_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     tvals = data.get("vals")
     if tvals is not None and isinstance(tvals, (list, tuple)):
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             fields["telemetry_values"] = tuple(int(v) for v in tvals)
-        except (ValueError, TypeError):
-            pass
     return fields
 
 
@@ -240,7 +238,7 @@ def decode_packet(raw_line: str, transport: str = "") -> APRSPacket:
     Returns:
         A frozen :class:`APRSPacket` instance.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # 0. Coerce to string for safety (e.g. if caller passes None or bytes)
     if not isinstance(raw_line, str):
@@ -286,10 +284,7 @@ def decode_packet(raw_line: str, transport: str = "") -> APRSPacket:
     source = data.get("from", source)
     destination = data.get("to", destination)
     raw_path = data.get("path", [])
-    if isinstance(raw_path, (list, tuple)):
-        path = tuple(raw_path)
-    else:
-        path = ()
+    path = tuple(raw_path) if isinstance(raw_path, (list, tuple)) else ()
 
     # 4. Map format-specific fields
     fmt = data.get("format", "")

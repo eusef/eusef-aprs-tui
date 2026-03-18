@@ -14,23 +14,23 @@ Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import subprocess
 import sys
-
-logger = logging.getLogger(__name__)
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.command import Provider, Hit, Hits
+from textual.command import Hit, Hits, Provider
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Footer, Input
 
 from aprs_tui.config import AppConfig, default_config_path
 from aprs_tui.core.connection import ConnectionManager
-from aprs_tui.core.message_tracker import MessageTracker, InboundMessage, TrackedMessage
+from aprs_tui.core.message_tracker import InboundMessage, MessageTracker, TrackedMessage
 from aprs_tui.core.packet_bus import PacketBus
 from aprs_tui.core.station_tracker import StationTracker
 from aprs_tui.protocol.types import APRSPacket
@@ -40,6 +40,11 @@ from aprs_tui.ui.message_panel import MessagePanel
 from aprs_tui.ui.station_panel import StationPanel
 from aprs_tui.ui.status_bar import StatusBar
 from aprs_tui.ui.stream_panel import StreamPanel
+
+if TYPE_CHECKING:
+    from aprs_tui.ui.chat_screen import ChatScreen
+
+logger = logging.getLogger(__name__)
 
 
 class APRSCommandProvider(Provider):
@@ -152,7 +157,7 @@ class APRSTuiApp(App):
         self._aprs_is_manager: ConnectionManager | None = None
         self._tx_lock = asyncio.Lock()
         self._show_aprs_is = True
-        self._active_chats: dict[str, 'ChatScreen'] = {}  # callsign -> screen
+        self._active_chats: dict[str, ChatScreen] = {}  # callsign -> screen
         self._station_tracker = StationTracker(
             own_lat=config.station.latitude or None,
             own_lon=config.station.longitude or None,
@@ -210,8 +215,8 @@ class APRSTuiApp(App):
             # host field stores the BLE address or device name
             transport = KissBleTransport(address=self.config.server.host)
         elif protocol in ("kiss-serial", "kiss-bt"):
-            from aprs_tui.transport.kiss_serial import KissSerialTransport
             from aprs_tui.transport.kiss_bt import KissBtTransport
+            from aprs_tui.transport.kiss_serial import KissSerialTransport
             device = self.config.server.host
             baudrate = self.config.server.port
             if protocol == "kiss-bt":
@@ -249,8 +254,16 @@ class APRSTuiApp(App):
 
             # Create beacon manager now that we have a transport
             from aprs_tui.core.beacon import BeaconManager
-            bcn_lat = self.config.beacon.latitude if self.config.beacon.latitude != 0.0 else self.config.station.latitude
-            bcn_lon = self.config.beacon.longitude if self.config.beacon.longitude != 0.0 else self.config.station.longitude
+            bcn_lat = (
+                self.config.beacon.latitude
+                if self.config.beacon.latitude != 0.0
+                else self.config.station.latitude
+            )
+            bcn_lon = (
+                self.config.beacon.longitude
+                if self.config.beacon.longitude != 0.0
+                else self.config.station.longitude
+            )
             self._beacon_manager = BeaconManager(
                 callsign=self.callsign,
                 latitude=bcn_lat,
@@ -303,8 +316,8 @@ class APRSTuiApp(App):
 
     async def _connect_aprs_is(self) -> None:
         """Connect to APRS-IS as a secondary transport."""
-        from aprs_tui.transport.aprs_is import AprsIsTransport
         from aprs_tui.core.dedup import DeduplicationFilter
+        from aprs_tui.transport.aprs_is import AprsIsTransport
 
         aprs_is_transport = AprsIsTransport(
             host=self.config.aprs_is.host,
@@ -505,10 +518,8 @@ class APRSTuiApp(App):
             # Disconnect transports with timeout
             for mgr in (self._connection_manager, self._aprs_is_manager):
                 if mgr:
-                    try:
+                    with contextlib.suppress(TimeoutError, Exception):
                         await asyncio.wait_for(mgr.disconnect(), timeout=3.0)
-                    except (asyncio.TimeoutError, Exception):
-                        pass
 
             # Stop managed Direwolf
             if self._direwolf_manager and self._direwolf_manager.is_running:
@@ -610,7 +621,6 @@ class APRSTuiApp(App):
             self.notify(f"Config reload failed: {e}", severity="error")
             return
 
-        old_config = self.config
         self.config = new_config
         self.callsign = f"{new_config.station.callsign}-{new_config.station.ssid}"
 
@@ -620,10 +630,8 @@ class APRSTuiApp(App):
 
         # Always reconnect after wizard (we disconnected before suspend)
         if self._connection_manager:
-            try:
+            with contextlib.suppress(Exception):
                 await self._connection_manager.disconnect()
-            except Exception:
-                pass
         self._connection_manager = None
         self._beacon_manager = None
         self.run_worker(self._connect(), exclusive=True)
@@ -640,8 +648,16 @@ class APRSTuiApp(App):
             self._beacon_manager.disable()
             self.notify("Beacon OFF")
         else:
-            bcn_lat = self.config.beacon.latitude if self.config.beacon.latitude != 0.0 else self.config.station.latitude
-            bcn_lon = self.config.beacon.longitude if self.config.beacon.longitude != 0.0 else self.config.station.longitude
+            bcn_lat = (
+                self.config.beacon.latitude
+                if self.config.beacon.latitude != 0.0
+                else self.config.station.latitude
+            )
+            bcn_lon = (
+                self.config.beacon.longitude
+                if self.config.beacon.longitude != 0.0
+                else self.config.station.longitude
+            )
             if bcn_lat == 0.0 and bcn_lon == 0.0:
                 self.notify("Set your position first (Ctrl+W → station)", severity="warning")
                 return
@@ -712,8 +728,8 @@ class APRSTuiApp(App):
 
     def _open_chat(self, callsign: str) -> None:
         """Open or resume a chat screen with a station."""
-        from aprs_tui.ui.chat_screen import ChatScreen, ChatMessage
         from aprs_tui.core.chat_store import load_chat, save_chat
+        from aprs_tui.ui.chat_screen import ChatMessage, ChatScreen
 
         callsign = callsign.upper()
 
@@ -833,10 +849,8 @@ class APRSTuiApp(App):
             self.notify(f"Sending to {to_call.upper()}: {msg_text}")
 
             # Return focus to stream
-            try:
+            with contextlib.suppress(Exception):
                 self.query_one(StreamPanel).focus()
-            except Exception:
-                pass
         except Exception as e:
             self.notify(f"Send failed: {e}", severity="error")
 
@@ -849,18 +863,15 @@ class APRSTuiApp(App):
 
         cancelled = 0
         for msg in list(self._message_tracker.history):
-            if msg.state.value == "pending":
-                if self._message_tracker.cancel_message(msg.msg_id):
-                    cancelled += 1
+            if msg.state.value == "pending" and self._message_tracker.cancel_message(msg.msg_id):
+                cancelled += 1
 
         self.notify(f"Cancelled {cancelled} pending message(s)")
 
     def _ui_increment_rx(self) -> None:
         """Just increment RX counter without adding to stream."""
-        try:
+        with contextlib.suppress(Exception):
             self.query_one(StatusBar).increment_rx()
-        except Exception:
-            pass
 
     def _ui_store_hidden_packet(self, pkt: APRSPacket) -> None:
         """Store packet in stream panel without displaying it."""

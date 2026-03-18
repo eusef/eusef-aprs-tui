@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Test Mobilinkd TNC4 USB - try various protocols to get a response."""
-import serial
 import time
+
+import serial
 
 DEVICE = "/dev/cu.usbmodem2082336543461"
 

@@ -185,7 +185,7 @@ class TestParseErrorDisplay:
     async def test_parse_error_shows_raw_packet(self):
         """A malformed packet displays the raw packet string."""
         app = _make_app()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             panel = app.query_one(StreamPanel)
             pkt = _parse_error_packet()
             # Format the packet and check it contains the raw text

@@ -18,12 +18,11 @@ from __future__ import annotations
 
 import pytest
 
+from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_serial import (
     SUPPORTED_BAUD_RATES,
     KissSerialTransport,
 )
-from aprs_tui.transport.base import ConnectionState
-
 
 # ==========================================================================
 # Serial connection lifecycle

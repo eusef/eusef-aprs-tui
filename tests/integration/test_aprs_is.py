@@ -25,7 +25,6 @@ import pytest
 from aprs_tui.transport.aprs_is import AprsIsTransport
 from aprs_tui.transport.base import ConnectionState
 
-
 # ==========================================================================
 # Connection and login
 # ==========================================================================

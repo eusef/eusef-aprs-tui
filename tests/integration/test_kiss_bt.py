@@ -13,11 +13,9 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
+from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_bt import KissBtTransport, get_bt_device_path
 from aprs_tui.transport.kiss_serial import KissSerialTransport
-from aprs_tui.transport.base import ConnectionState
 
 
 class TestKissBtTransport:

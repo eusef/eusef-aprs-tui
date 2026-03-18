@@ -15,18 +15,15 @@ The encoder builds APRS packets for transmission:
 """
 from __future__ import annotations
 
-import pytest
-
+from aprs_tui.protocol.ax25 import ax25_decode, ax25_encode
 from aprs_tui.protocol.encoder import (
-    encode_position,
-    encode_message,
-    encode_ack,
-    encode_rej,
     build_packet,
+    encode_ack,
+    encode_message,
+    encode_position,
+    encode_rej,
 )
-from aprs_tui.protocol.ax25 import ax25_encode, ax25_decode
-from aprs_tui.protocol.kiss import kiss_frame, kiss_deframe
-
+from aprs_tui.protocol.kiss import kiss_deframe, kiss_frame
 
 # ==========================================================================
 # Position encoding (for beacons)

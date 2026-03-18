@@ -13,13 +13,10 @@ Used by: unit/, integration/, acceptance/
 from __future__ import annotations
 
 import asyncio
-import socket
-import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Sample APRS packets - real-world examples covering every packet type

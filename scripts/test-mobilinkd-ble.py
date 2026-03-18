@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Test Mobilinkd TNC4 BLE connection and KISS data."""
 import asyncio
-from bleak import BleakScanner, BleakClient
+
+from bleak import BleakClient, BleakScanner
 
 KISS_SERVICE = "00000001-ba2a-46c9-ae49-01b0961f68bb"
 KISS_TX_CHAR = "00000003-ba2a-46c9-ae49-01b0961f68bb"  # TNC→App (notify)
@@ -19,7 +20,7 @@ async def main():
         print(f"  Found: {name} ({d.address})")
         if "mobilinkd" in name.lower() or "tnc" in name.lower():
             tnc = d
-            print(f"  ^^^ TNC detected!")
+            print("  ^^^ TNC detected!")
 
     if not tnc:
         print("\nNo TNC found. Make sure Mobilinkd is powered on and phone app is closed.")
@@ -48,9 +49,9 @@ async def main():
         hex_str = data.hex(" ")
         print(f"  [{packet_count}] {len(data)} bytes: {hex_str}")
         if 0xC0 in data:
-            print(f"       ^^^ KISS FEND detected!")
+            print("       ^^^ KISS FEND detected!")
 
-    print(f"\nSubscribing to KISS TX notifications...")
+    print("\nSubscribing to KISS TX notifications...")
     await client.start_notify(KISS_TX_CHAR, on_notify)
 
     print("Listening for 30 seconds... (transmit from your other radio)")

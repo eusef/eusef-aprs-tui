@@ -18,13 +18,12 @@ message ack/rej, weather, object, status, telemetry.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
 from aprs_tui.protocol.decoder import decode_packet
 from aprs_tui.protocol.types import APRSPacket
-
 
 # ==========================================================================
 # Position packets
@@ -393,8 +392,8 @@ class TestDecodeMetadata:
     def test_timestamp_set(self):
         """timestamp is set to approximately now on decode."""
         raw = "W3ADO-1>APRS:>Test status"
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         pkt = decode_packet(raw)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert pkt.timestamp is not None
         assert before <= pkt.timestamp <= after
