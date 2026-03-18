@@ -4,19 +4,6 @@ A keyboard-driven terminal interface for [APRS](https://en.wikipedia.org/wiki/Au
 
 Connects to any KISS TCP endpoint: a local [Direwolf](https://github.com/wb2osz/direwolf) instance, a Bluetooth TNC (Kenwood TH-D74/D75, Mobilinkd, UV-Pro), a remote server over your LAN, or the APRS-IS internet gateway — with no code changes. A companion setup wizard handles all hardware configuration interactively.
 
-```
-╔══════════════════════════════════════════════════════════════════╗
-║  Packet Stream          │  Stations              │  Messages    ║
-║ ────────────────────────┼────────────────────────┼────────────  ║
-║  W7XXX-9 > APRS: ...   │  W7XXX-9   0.0 km  N  │  [inbox]    ║
-║  KD7ABC > WIDE2-1: ... │  KD7ABC    12.3 km NE  │  [compose]  ║
-║  ...                   │  ...                   │             ║
-╠══════════════════════════════════════════════════════════════════╣
-║  W7XXX-9  │  Direwolf @ raspberrypi.local:8001  │  TX:3  RX:142║
-╚══════════════════════════════════════════════════════════════════╝
-```
-
-![aprs-tui screenshot](aprs-tui.png)
 
 ## Features
 
