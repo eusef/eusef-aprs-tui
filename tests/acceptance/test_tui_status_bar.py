@@ -41,10 +41,12 @@ class TestStatusBarConnectionState:
 
     @pytest.mark.asyncio
     async def test_disconnected_state(self):
-        """StatusBar defaults to DISCONNECTED and renders NOT CONNECTED."""
+        """StatusBar renders NOT CONNECTED when in DISCONNECTED state."""
         app = _make_app()
         async with app.run_test():
             bar = app.query_one(StatusBar)
+            # App may auto-connect on startup; force DISCONNECTED to test rendering
+            bar.update_state(ConnectionState.DISCONNECTED)
             assert bar.connection_state == "DISCONNECTED"
             rendered = bar.render()
             assert "NOT CONNECTED" in rendered.plain
