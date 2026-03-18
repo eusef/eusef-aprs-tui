@@ -28,6 +28,9 @@ class StatusBar(Static):
         self._transport_name = ""
         self._rx_count = 0
         self._tx_count = 0
+
+    def on_mount(self) -> None:
+        """Refresh content once the widget is mounted in an active app."""
         self._refresh_content()
 
     def _refresh_content(self) -> None:
@@ -61,7 +64,10 @@ class StatusBar(Static):
         # Ko-fi support link
         text.append(" ☕ Support this app: ko-fi.com/philj2 ", style="#e3b341")
 
-        self.update(text)
+        try:
+            self.update(text)
+        except Exception:
+            pass  # Not yet mounted; on_mount will refresh
 
     def update_state(self, state: ConnectionState, transport_name: str = "") -> None:
         """Update connection state and transport name."""

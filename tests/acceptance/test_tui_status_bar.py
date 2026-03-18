@@ -42,10 +42,12 @@ class TestStatusBarConnectionState:
     @pytest.mark.asyncio
     async def test_disconnected_state(self):
         """StatusBar defaults to DISCONNECTED and renders NOT CONNECTED."""
-        bar = StatusBar("N0CALL-0")
-        assert bar.connection_state == "DISCONNECTED"
-        rendered = bar.render()
-        assert "NOT CONNECTED" in rendered.plain
+        app = _make_app()
+        async with app.run_test():
+            bar = app.query_one(StatusBar)
+            assert bar.connection_state == "DISCONNECTED"
+            rendered = bar.render()
+            assert "NOT CONNECTED" in rendered.plain
 
     @pytest.mark.skip(reason="Sprint 3: Requires transport integration")
     async def test_connecting_state(self, tmp_config_file):
