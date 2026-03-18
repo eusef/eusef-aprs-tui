@@ -4,6 +4,7 @@ A keyboard-driven terminal interface for [APRS](https://en.wikipedia.org/wiki/Au
 
 Connects to any KISS TCP endpoint: a local [Direwolf](https://github.com/wb2osz/direwolf) instance, a Bluetooth TNC (Kenwood TH-D74/D75, Mobilinkd, UV-Pro), a remote server over your LAN, or the APRS-IS internet gateway — with no code changes. A companion setup wizard handles all hardware configuration interactively.
 
+![aprs-tui screenshot](aprs-tui.png)
 
 ## Features
 
