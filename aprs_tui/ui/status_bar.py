@@ -64,10 +64,7 @@ class StatusBar(Static):
         # Ko-fi support link
         text.append(" ☕ Support this app: ko-fi.com/philj2 ", style="#e3b341")
 
-        try:
-            self.update(text)
-        except Exception:
-            pass  # Not yet mounted; on_mount will refresh
+        self.update(text)
 
     def update_state(self, state: ConnectionState, transport_name: str = "") -> None:
         """Update connection state and transport name."""
