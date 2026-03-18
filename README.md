@@ -16,6 +16,8 @@ Connects to any KISS TCP endpoint: a local [Direwolf](https://github.com/wb2osz/
 ╚══════════════════════════════════════════════════════════════════╝
 ```
 
+![aprs-tui screenshot](aprs-tui.png)
+
 ## Features
 
 - **Multi-transport** — KISS TCP, Bluetooth SPP, KISS serial, and APRS-IS in one app
