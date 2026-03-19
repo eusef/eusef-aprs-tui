@@ -184,6 +184,13 @@ class APRSTuiApp(App):
     def on_mount(self) -> None:
         self.title = "APRS-TUI"
         self.sub_title = self.callsign
+        # Hide APRS-IS checkbox when primary transport is already APRS-IS
+        if self.config.server.protocol == "aprs-is":
+            try:
+                panel = self.query_one(MessagePanel)
+                panel.set_aprs_is_visible(False)
+            except Exception:
+                pass
         # Start primary connection in background
         self.run_worker(self._connect(), exclusive=True, group="primary")
         # Start APRS-IS independently (don't wait for primary)
@@ -345,6 +352,9 @@ class APRSTuiApp(App):
                 self.notify,
                 f"APRS-IS connected: {aprs_is_transport.display_name}",
             )
+            # Enable APRS-IS send checkbox if passcode allows TX
+            if self.config.aprs_is.passcode != -1:
+                self.call_later(self._ui_update_aprs_is_checkbox, True)
         except Exception:
             self.call_later(
                 self.notify,
@@ -354,7 +364,12 @@ class APRSTuiApp(App):
 
     def _on_aprs_is_state_change(self, state: ConnectionState) -> None:
         """Handle APRS-IS connection state changes."""
-        pass  # Primary status bar shows radio; APRS-IS is secondary
+        # Enable/disable the APRS-IS send checkbox based on gateway state
+        tx_available = (
+            state == ConnectionState.CONNECTED
+            and self.config.aprs_is.passcode != -1
+        )
+        self.call_later(self._ui_update_aprs_is_checkbox, tx_available)
 
     def _on_aprs_is_packet(self, pkt: APRSPacket) -> None:
         """Handle packets from APRS-IS (secondary transport)."""
@@ -403,6 +418,14 @@ class APRSTuiApp(App):
         try:
             status_bar = self.query_one(StatusBar)
             status_bar.update_state(state, transport_name)
+        except Exception:
+            pass
+
+    def _ui_update_aprs_is_checkbox(self, tx_available: bool) -> None:
+        """Enable/disable the APRS-IS checkbox based on gateway state."""
+        try:
+            panel = self.query_one(MessagePanel)
+            panel.set_aprs_is_enabled(tx_available)
         except Exception:
             pass
 
@@ -672,7 +695,7 @@ class APRSTuiApp(App):
 
         async def _do_ack():
             try:
-                await self._send_message_frame(info)
+                await self._send_message_frame(info, via_aprs_is=False)
                 self.call_later(
                     self.notify,
                     f"Ack sent to {source} for #{msg_id}",
@@ -683,27 +706,42 @@ class APRSTuiApp(App):
 
         self.run_worker(_do_ack())
 
-    async def _send_message_frame(self, info: str) -> None:
-        """Send an APRS message info field as an AX.25 frame via the transport.
+    async def _send_message_frame(self, info: str, via_aprs_is: bool = False) -> None:
+        """Send an APRS message info field via the appropriate transport.
 
         Called by MessageTracker for initial send and retries.
+        Routes through APRS-IS (text protocol) or RF (AX.25 binary)
+        depending on the via_aprs_is flag and primary transport type.
         Uses a TX lock to prevent simultaneous transmissions.
         """
         async with self._tx_lock:
-            if not self._connection_manager or self._connection_manager.state.value != "connected":
-                raise ConnectionError("Not connected")
-
-            from aprs_tui.protocol.ax25 import ax25_encode
-
-            ax25_data = ax25_encode(
-                self.callsign, "APRS",
-                ["WIDE1-1", "WIDE2-1"],
-                info.encode("latin-1"),
-            )
-            await self._connection_manager.send_frame(ax25_data)
-
-            # Wait for radio to release PTT before allowing next TX
-            await asyncio.sleep(2.0)
+            if via_aprs_is:
+                # Route through secondary APRS-IS gateway
+                if not self._aprs_is_manager or self._aprs_is_manager.state.value != "connected":
+                    raise ConnectionError("APRS-IS gateway not connected")
+                from aprs_tui.protocol.encoder import build_packet
+                packet_line = build_packet(self.callsign, "APRS", info, ["TCPIP*"])
+                await self._aprs_is_manager.send_frame(packet_line.encode("latin-1"))
+            elif self.config.server.protocol == "aprs-is":
+                # Primary transport is APRS-IS — send as text packet
+                if not self._connection_manager or self._connection_manager.state.value != "connected":
+                    raise ConnectionError("Not connected")
+                from aprs_tui.protocol.encoder import build_packet
+                packet_line = build_packet(self.callsign, "APRS", info, ["TCPIP*"])
+                await self._connection_manager.send_frame(packet_line.encode("latin-1"))
+            else:
+                # Primary transport is RF (KISS) — send as AX.25 frame
+                if not self._connection_manager or self._connection_manager.state.value != "connected":
+                    raise ConnectionError("Not connected")
+                from aprs_tui.protocol.ax25 import ax25_encode
+                ax25_data = ax25_encode(
+                    self.callsign, "APRS",
+                    ["WIDE1-1", "WIDE2-1"],
+                    info.encode("latin-1"),
+                )
+                await self._connection_manager.send_frame(ax25_data)
+                # Wait for radio to release PTT before allowing next TX
+                await asyncio.sleep(2.0)
 
     def _on_beacon_sent(self) -> None:
         """Called when a beacon is transmitted."""
@@ -825,7 +863,7 @@ class APRSTuiApp(App):
         """Send the composed message."""
         try:
             panel = self.query_one(MessagePanel)
-            to_call, msg_text = panel.get_compose_values()
+            to_call, msg_text, via_aprs_is = panel.get_compose_values()
 
             if not to_call:
                 self.notify("Enter a destination callsign", severity="warning")
@@ -835,10 +873,15 @@ class APRSTuiApp(App):
                 return
 
             # Track the message and start retry loop
-            msg_id = self._message_tracker.send_message(to_call.upper(), msg_text)
+            msg_id = self._message_tracker.send_message(
+                to_call.upper(), msg_text, via_aprs_is=via_aprs_is,
+            )
 
             # Show in panel
-            panel.add_sent_message(to_call.upper(), msg_text, msg_id, state="pending")
+            panel.add_sent_message(
+                to_call.upper(), msg_text, msg_id,
+                state="pending", via_aprs_is=via_aprs_is,
+            )
             panel.clear_compose()
 
             # Start retry loop (handles initial send + retries via _send_message_frame)
@@ -846,7 +889,9 @@ class APRSTuiApp(App):
                 self._message_tracker.start_retry_loop(msg_id)
 
             self.run_worker(_start_retries())
-            self.notify(f"Sending to {to_call.upper()}: {msg_text}")
+
+            route = " via APRS-IS" if via_aprs_is else ""
+            self.notify(f"Sending to {to_call.upper()}{route}: {msg_text}")
 
             # Return focus to stream
             with contextlib.suppress(Exception):

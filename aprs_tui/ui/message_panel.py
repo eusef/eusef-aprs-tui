@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.widget import Widget
-from textual.widgets import Input, RichLog
+from textual.widgets import Checkbox, Input, RichLog
 
 # Message state symbols
 STATE_SYMBOLS = {
@@ -30,6 +31,7 @@ class DisplayMessage:
     state: str = "received"  # pending, acked, rejected, failed, received
     timestamp: float = field(default_factory=time.monotonic)
     retry_info: str = ""  # e.g., "2/5, retry in 30s"
+    via_aprs_is: bool = False
 
 
 class MessagePanel(Widget):
@@ -57,9 +59,27 @@ class MessagePanel(Widget):
         padding: 0;
         scrollbar-size: 0 0;
     }
-    #msg-to-input {
-        width: 100%;
+    #msg-compose-row {
+        height: 1;
+        layout: horizontal;
         margin: 0;
+        padding: 0;
+    }
+    #msg-to-input {
+        width: 1fr;
+        margin: 0;
+    }
+    #msg-aprs-is {
+        width: auto;
+        min-width: 14;
+        height: 1;
+        margin: 0;
+        padding: 0 1;
+        background: #21262d;
+        color: #8b949e;
+    }
+    #msg-aprs-is:focus {
+        background: #30363d;
     }
     #msg-text-input {
         width: 100%;
@@ -79,12 +99,41 @@ class MessagePanel(Widget):
 
     def compose(self) -> ComposeResult:
         yield RichLog(id="msg-inbox", wrap=True, markup=False)
-        yield Input(placeholder="To: callsign", id="msg-to-input", max_length=9)
+        with Horizontal(id="msg-compose-row"):
+            yield Input(placeholder="To: callsign", id="msg-to-input", max_length=9)
+            yield Checkbox("APRS-IS", value=False, id="msg-aprs-is")
         yield Input(
             placeholder="Msg: (67 chars max) Enter to send",
             id="msg-text-input",
             max_length=67,
         )
+
+    def on_mount(self) -> None:
+        """Disable APRS-IS checkbox by default until gateway connects."""
+        cb = self.query_one("#msg-aprs-is", Checkbox)
+        cb.disabled = True
+        cb.tooltip = "APRS-IS gateway not connected"
+
+    def set_aprs_is_enabled(self, enabled: bool) -> None:
+        """Enable or disable the APRS-IS send checkbox."""
+        try:
+            cb = self.query_one("#msg-aprs-is", Checkbox)
+            cb.disabled = not enabled
+            if enabled:
+                cb.tooltip = "Send message via APRS-IS internet gateway"
+            else:
+                cb.tooltip = "APRS-IS gateway not available for TX"
+                cb.value = False
+        except Exception:
+            pass
+
+    def set_aprs_is_visible(self, visible: bool) -> None:
+        """Show or hide the APRS-IS checkbox (hidden when primary is APRS-IS)."""
+        try:
+            cb = self.query_one("#msg-aprs-is", Checkbox)
+            cb.display = visible
+        except Exception:
+            pass
 
     def add_received_message(self, source: str, text: str, msg_id: str | None = None) -> None:
         """Add an inbound message to the inbox."""
@@ -97,12 +146,14 @@ class MessagePanel(Widget):
         self.border_title = f"Messages ({len(self._messages)})"
 
     def add_sent_message(
-        self, destination: str, text: str, msg_id: str, state: str = "pending"
+        self, destination: str, text: str, msg_id: str,
+        state: str = "pending", via_aprs_is: bool = False,
     ) -> None:
         """Add an outbound message to the inbox."""
         msg = DisplayMessage(
             source=self._callsign, destination=destination,
             text=text, msg_id=msg_id, state=state,
+            via_aprs_is=via_aprs_is,
         )
         self._messages.append(msg)
         self._render_message(msg)
@@ -125,11 +176,13 @@ class MessagePanel(Widget):
                 break
         self._refresh_inbox()
 
-    def get_compose_values(self) -> tuple[str, str]:
-        """Get the current callsign and message text from compose inputs."""
+    def get_compose_values(self) -> tuple[str, str, bool]:
+        """Get the current callsign, message text, and APRS-IS flag from compose inputs."""
         to_input = self.query_one("#msg-to-input", Input)
         text_input = self.query_one("#msg-text-input", Input)
-        return to_input.value.strip(), text_input.value.strip()
+        cb = self.query_one("#msg-aprs-is", Checkbox)
+        via_aprs_is = cb.value and not cb.disabled
+        return to_input.value.strip(), text_input.value.strip(), via_aprs_is
 
     def clear_compose(self) -> None:
         """Clear the compose inputs."""
@@ -154,6 +207,10 @@ class MessagePanel(Widget):
             # Outbound: >> → DEST: message text
             line.append(f"→ {msg.destination:<10s} ", style=f"bold {color}")
             line.append(msg.text, style=color)
+
+        # APRS-IS route indicator
+        if msg.via_aprs_is and msg.state != "received":
+            line.append(" IS", style="bold #79c0ff")
 
         # Message ID
         if msg.msg_id:

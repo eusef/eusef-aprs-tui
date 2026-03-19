@@ -31,6 +31,7 @@ class TrackedMessage:
     msg_id: str
     addressee: str
     text: str
+    via_aprs_is: bool = False
     state: MessageState = MessageState.PENDING
     send_count: int = 0
     created_at: float = field(default_factory=time.monotonic)
@@ -61,7 +62,7 @@ class MessageTracker:
         self,
         own_callsign: str,
         max_retries: int = 5,
-        send_func: Callable[[str], Awaitable[None]] | None = None,
+        send_func: Callable[[str, bool], Awaitable[None]] | None = None,
         on_state_change: Callable[[TrackedMessage], None] | None = None,
         on_inbound: Callable[[InboundMessage], None] | None = None,
         on_retry: Callable[[TrackedMessage, int, int], None] | None = None,
@@ -96,7 +97,7 @@ class MessageTracker:
     def history(self) -> list[TrackedMessage]:
         return list(self._history)
 
-    def send_message(self, addressee: str, text: str) -> str:
+    def send_message(self, addressee: str, text: str, via_aprs_is: bool = False) -> str:
         """Queue a message for sending. Returns the assigned message ID.
 
         Call start_retry_loop() after this to begin the retry cycle.
@@ -104,7 +105,10 @@ class MessageTracker:
         msg_id = str(self._next_id)
         self._next_id += 1
 
-        tracked = TrackedMessage(msg_id=msg_id, addressee=addressee.upper(), text=text)
+        tracked = TrackedMessage(
+            msg_id=msg_id, addressee=addressee.upper(), text=text,
+            via_aprs_is=via_aprs_is,
+        )
         self._pending[msg_id] = tracked
         self._history.append(tracked)
 
@@ -206,7 +210,7 @@ class MessageTracker:
                 if self._send_func:
                     try:
                         info = encode_message(tracked.addressee, tracked.text, tracked.msg_id)
-                        await self._send_func(info)
+                        await self._send_func(info, tracked.via_aprs_is)
                     except Exception as e:
                         logger.error("Message send failed: %s", e)
 
@@ -237,7 +241,7 @@ class MessageTracker:
         """Send an ack for a received message."""
         if self._send_func:
             info = encode_ack(source, msg_id)
-            await self._send_func(info)
+            await self._send_func(info, False)
 
     def stop(self) -> None:
         """Cancel all retry tasks."""
