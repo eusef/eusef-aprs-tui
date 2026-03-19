@@ -21,26 +21,26 @@ KISS_DATA_CMD = 0x00
 # Build a minimal APRS beacon as AX.25 + KISS
 # This avoids importing project code so the script is self-contained
 sys.path.insert(0, ".")
-from aprs_tui.protocol.ax25 import ax25_encode
-from aprs_tui.protocol.encoder import encode_message
+from aprs_tui.protocol.ax25 import ax25_encode  # noqa: E402
+from aprs_tui.protocol.encoder import encode_message  # noqa: E402
 
 
 def kiss_encode(data: bytes) -> bytes:
     """Wrap raw AX.25 frame in KISS framing."""
-    FESC, TFEND, TFESC = 0xDB, 0xDC, 0xDD
+    fesc, tfend, tfesc = 0xDB, 0xDC, 0xDD
     stuffed = bytearray()
     for b in data:
         if b == FEND:
-            stuffed.extend([FESC, TFEND])
-        elif b == FESC:
-            stuffed.extend([FESC, TFESC])
+            stuffed.extend([fesc, tfend])
+        elif b == fesc:
+            stuffed.extend([fesc, tfesc])
         else:
             stuffed.append(b)
     return bytes([FEND, KISS_DATA_CMD]) + bytes(stuffed) + bytes([FEND])
 
 
 def main():
-    print(f"=== UV-PRO Serial TX Diagnostic ===")
+    print("=== UV-PRO Serial TX Diagnostic ===")
     print(f"Device: {DEVICE}")
     print(f"Baud:   {BAUDRATE}")
     print()

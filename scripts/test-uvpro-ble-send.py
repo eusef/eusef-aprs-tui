@@ -34,16 +34,16 @@ MSG_ID = "97"
 
 
 def kiss_encode(data: bytes) -> bytes:
-    FEND, FESC, TFEND, TFESC = 0xC0, 0xDB, 0xDC, 0xDD
+    fend, fesc, tfend, tfesc = 0xC0, 0xDB, 0xDC, 0xDD  # noqa: N806
     stuffed = bytearray()
     for b in data:
-        if b == FEND:
-            stuffed.extend([FESC, TFEND])
-        elif b == FESC:
-            stuffed.extend([FESC, TFESC])
+        if b == fend:
+            stuffed.extend([fesc, tfend])
+        elif b == fesc:
+            stuffed.extend([fesc, tfesc])
         else:
             stuffed.append(b)
-    return bytes([FEND, 0x00]) + bytes(stuffed) + bytes([FEND])
+    return bytes([fend, 0x00]) + bytes(stuffed) + bytes([fend])
 
 
 async def main():
@@ -93,11 +93,9 @@ async def main():
     # Step 3: Try to trigger BLE encryption/bonding
     print("\n[3] Attempting BLE encryption negotiation...")
     print("    (On macOS, this may trigger a pairing dialog in System Settings)")
-    bonded = False
     try:
         val = await client.read_gatt_char(ENCRYPTED_CHAR)
         print(f"    Encrypted char read OK: {val.hex(' ') if val else 'empty'}")
-        bonded = True
     except Exception as e:
         print(f"    Encrypted char read failed: {e}")
         print("    This is expected if the device needs bonding that hasn't been done yet.")
@@ -173,10 +171,10 @@ async def main():
         print(f"    [{i+1}] {r.hex(' ')}")
 
     # Cleanup
-    try:
+    import contextlib
+
+    with contextlib.suppress(Exception):
         await client.stop_notify(KISS_TX_CHAR)
-    except Exception:
-        pass
     await client.disconnect()
     print("\n[Done] Disconnected.")
     print()
