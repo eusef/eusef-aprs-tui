@@ -31,6 +31,17 @@ Screen {
     border: double #58a6ff;
 }
 
+#map-panel {
+    width: 1fr;
+    height: 1fr;
+    border: solid #30363d;
+    border-title-color: #8b949e;
+}
+
+#map-panel:focus-within {
+    border: double #58a6ff;
+}
+
 #message-panel {
     height: 10;
     border: solid #30363d;

@@ -18,6 +18,7 @@ from aprs_tui.config import (
     AppConfig,
     APRSISConfig,
     BeaconConfig,
+    MapConfig,
     ServerConfig,
     StationConfig,
     default_config_path,
@@ -27,7 +28,7 @@ console = Console()
 
 # Section map per PRD 6.2
 SECTION_MAP = {
-    "all": ["deps", "connection", "station", "beacon", "aprs_is", "write"],
+    "all": ["deps", "connection", "station", "beacon", "aprs_is", "map", "write"],
     "server": ["deps", "connection", "write"],
     "bt": ["deps", "bluetooth", "write"],
     "station": ["station", "write"],
@@ -1242,6 +1243,201 @@ def step_aprs_is(config: AppConfig) -> AppConfig:
     )
 
 
+def step_map_setup(config: AppConfig) -> AppConfig:
+    """Configure offline map panel and optionally download tiles."""
+    console.print("\n[bold]Map Panel Setup[/bold]")
+
+    enabled = questionary.confirm(
+        "Enable map panel?", default=True
+    ).ask()
+    if enabled is None:
+        raise KeyboardInterrupt
+
+    if not enabled:
+        return config.model_copy(
+            update={"map": config.map.model_copy(update={"enabled": False})}
+        )
+
+    download_now = questionary.confirm(
+        "Download offline maps now?", default=True
+    ).ask()
+    if download_now is None:
+        raise KeyboardInterrupt
+
+    if not download_now:
+        console.print("  [dim]You can download maps later with: python -m aprs_tui.map.downloader[/dim]")
+        return config.model_copy(
+            update={"map": config.map.model_copy(update={"enabled": True})}
+        )
+
+    # --- Region specification ---
+    stn_lat = (
+        config.station.latitude if config.station.latitude != 0.0 else config.beacon.latitude
+    )
+    stn_lon = (
+        config.station.longitude if config.station.longitude != 0.0 else config.beacon.longitude
+    )
+
+    region_choices = []
+    if stn_lat != 0.0 and stn_lon != 0.0:
+        region_choices.append(
+            questionary.Choice(
+                f"Use current station position ({stn_lat}, {stn_lon}) + radius",
+                value="center",
+            )
+        )
+    region_choices.append(
+        questionary.Choice("Enter bounding box coordinates manually", value="bbox")
+    )
+
+    region_mode = questionary.select(
+        "How would you like to specify the map region?",
+        choices=region_choices,
+    ).ask()
+    if region_mode is None:
+        raise KeyboardInterrupt
+
+    if region_mode == "center":
+        radius_str = questionary.text(
+            "Radius in km:", default="200"
+        ).ask()
+        if radius_str is None:
+            raise KeyboardInterrupt
+        radius_km = float(radius_str)
+
+        from aprs_tui.map.downloader import bounding_box_from_center
+
+        min_lat, max_lat, min_lon, max_lon = bounding_box_from_center(
+            stn_lat, stn_lon, radius_km
+        )
+        console.print(
+            f"  [dim]Bounding box: {min_lat:.2f},{min_lon:.2f} to {max_lat:.2f},{max_lon:.2f}[/dim]"
+        )
+    else:
+        min_lat_str = questionary.text("Min latitude (south):").ask()
+        if min_lat_str is None:
+            raise KeyboardInterrupt
+        max_lat_str = questionary.text("Max latitude (north):").ask()
+        if max_lat_str is None:
+            raise KeyboardInterrupt
+        min_lon_str = questionary.text("Min longitude (west):").ask()
+        if min_lon_str is None:
+            raise KeyboardInterrupt
+        max_lon_str = questionary.text("Max longitude (east):").ask()
+        if max_lon_str is None:
+            raise KeyboardInterrupt
+        min_lat = float(min_lat_str)
+        max_lat = float(max_lat_str)
+        min_lon = float(min_lon_str)
+        max_lon = float(max_lon_str)
+
+    # --- Max zoom level ---
+    zoom_choice = questionary.select(
+        "Max zoom level:",
+        choices=[
+            questionary.Choice("10 - Regional overview (~5 MB)", value=10),
+            questionary.Choice("14 - City detail (~80 MB)", value=14),
+            questionary.Choice("16 - Street detail (~500 MB)", value=16),
+        ],
+    ).ask()
+    if zoom_choice is None:
+        raise KeyboardInterrupt
+    max_zoom = zoom_choice
+
+    # --- Estimate and confirm ---
+    from aprs_tui.map.downloader import (
+        TileDownloader,
+        calculate_tile_count,
+        estimate_size_mb,
+    )
+
+    tile_count = calculate_tile_count(min_lat, max_lat, min_lon, max_lon, 0, max_zoom)
+    size_mb = estimate_size_mb(tile_count)
+
+    console.print(f"\n  Tiles to download: [bold]{tile_count:,}[/bold]")
+    console.print(f"  Estimated size:    [bold]{size_mb:.1f} MB[/bold]")
+
+    proceed = questionary.confirm("Proceed with download?", default=True).ask()
+    if proceed is None:
+        raise KeyboardInterrupt
+
+    if not proceed:
+        console.print("  [dim]Download skipped. You can download maps later.[/dim]")
+        return config.model_copy(
+            update={"map": config.map.model_copy(update={"enabled": True})}
+        )
+
+    # --- Download with progress ---
+    from aprs_tui.map.registry import MapRegistry, default_maps_dir
+
+    maps_dir = default_maps_dir()
+    region_name = f"{config.station.callsign.lower()}-region"
+    output_path = maps_dir / f"{region_name}.mbtiles"
+
+    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+
+    progress = Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console,
+    )
+
+    task_id = None
+
+    def on_progress(p):  # noqa: ANN001
+        nonlocal task_id
+        if task_id is None:
+            task_id = progress.add_task("Downloading tiles", total=p.total_tiles)
+        progress.update(
+            task_id,
+            completed=p.downloaded_tiles + p.skipped_tiles,
+        )
+
+    downloader = TileDownloader(progress_callback=on_progress)
+
+    console.print(f"\n  Downloading to: {output_path}")
+    with progress:
+        downloader.download(
+            output_path=output_path,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            min_lon=min_lon,
+            max_lon=max_lon,
+            min_zoom=0,
+            max_zoom=max_zoom,
+            map_name=region_name,
+        )
+
+    console.print(f"  [green]\u2713[/green] Map downloaded: {output_path}")
+
+    # Register in map registry
+    import datetime
+
+    registry = MapRegistry(maps_dir)
+    from aprs_tui.map.registry import MapEntry
+
+    registry.register(
+        region_name,
+        MapEntry(
+            file=output_path.name,
+            name=f"{config.station.callsign} region",
+            bounds=(min_lon, min_lat, max_lon, max_lat),
+            min_zoom=0,
+            max_zoom=max_zoom,
+            size_mb=round(output_path.stat().st_size / (1024 * 1024), 1),
+            downloaded=datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
+        ),
+    )
+    console.print("  [green]\u2713[/green] Map registered in maps.toml")
+
+    updated_map = config.map.model_copy(
+        update={"enabled": True, "maps_dir": str(maps_dir)}
+    )
+    return config.model_copy(update={"map": updated_map})
+
+
 def step_write_config(config: AppConfig, config_path: Path) -> None:
     """Display summary and write config."""
     callsign = f"{config.station.callsign}-{config.station.ssid}"
@@ -1349,6 +1545,8 @@ def main() -> None:
             config = step_beacon(config)
         if "aprs_is" in steps:
             config = step_aprs_is(config)
+        if "map" in steps:
+            config = step_map_setup(config)
         if "write" in steps:
             step_write_config(config, config_path)
     except KeyboardInterrupt:

@@ -36,6 +36,7 @@ from aprs_tui.core.station_tracker import StationTracker
 from aprs_tui.protocol.types import APRSPacket
 from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_tcp import KissTcpTransport
+from aprs_tui.map.panel import MapPanel
 from aprs_tui.ui.message_panel import MessagePanel
 from aprs_tui.ui.station_panel import StationPanel
 from aprs_tui.ui.status_bar import StatusBar
@@ -64,6 +65,10 @@ class APRSCommandProvider(Provider):
             ("Toggle beacon on/off", "beacon"),
             ("Toggle raw packet display", "raw"),
             ("Toggle APRS-IS packets", "aprs_is_toggle"),
+            ("Toggle map panel", "map_toggle"),
+            ("Map: Download offline maps", "map_download"),
+            ("Map: List available maps", "map_list"),
+            ("Map: Toggle auto-zoom", "map_auto_zoom"),
             ("Quit application", "quit"),
         ]
 
@@ -93,6 +98,14 @@ class APRSCommandProvider(Provider):
                 app.action_toggle_raw()
             elif action_id == "aprs_is_toggle":
                 app.action_toggle_aprs_is()
+            elif action_id == "map_toggle":
+                app.action_toggle_map()
+            elif action_id == "map_download":
+                await app.action_map_download()
+            elif action_id == "map_list":
+                app.action_map_list()
+            elif action_id == "map_auto_zoom":
+                app.action_map_auto_zoom()
             elif action_id.startswith("config_"):
                 section = action_id.replace("config_", "")
                 if section == "all":
@@ -120,6 +133,9 @@ class APRSTuiApp(App):
         Binding("r", "toggle_raw", "Raw"),
         Binding("i", "toggle_aprs_is", "APRS-IS"),
         Binding("y", "copy_packet", "Copy"),
+
+        # Map toggle
+        Binding("m", "toggle_map", "Map"),
 
         # About screen
         Binding("a", "show_about", "About"),
@@ -172,18 +188,38 @@ class APRSTuiApp(App):
         )
         self._beacon_manager = None  # Created after connection
         self._direwolf_manager = None  # Managed Direwolf subprocess
+        self._map_visible = False  # Map panel toggle state
 
     def compose(self) -> ComposeResult:
         yield StatusBar(self.callsign)
         with Horizontal(id="main-panels"):
             yield StreamPanel(callsign=self.callsign, id="stream-panel")
             yield StationPanel(id="station-panel")
+            yield MapPanel(
+                station_tracker=self._station_tracker,
+                own_callsign=self.callsign,
+                map_config={
+                    "own_lat": self.config.station.latitude,
+                    "own_lon": self.config.station.longitude,
+                    "auto_zoom_min": self.config.map.auto_zoom_min,
+                    "auto_zoom_max": self.config.map.auto_zoom_max,
+                    "default_zoom": self.config.map.default_zoom,
+                    "show_is_stations": self.config.map.show_is_stations,
+                    "show_tracks": self.config.map.show_tracks,
+                },
+                id="map-panel",
+            )
         yield MessagePanel(callsign=self.callsign, id="message-panel")
         yield Footer()
 
     def on_mount(self) -> None:
         self.title = "APRS-TUI"
         self.sub_title = self.callsign
+        # Hide map panel initially (toggle with m key)
+        try:
+            self.query_one("#map-panel", MapPanel).display = False
+        except Exception:
+            pass
         # Hide APRS-IS checkbox when primary transport is already APRS-IS
         if self.config.server.protocol == "aprs-is":
             try:
@@ -437,6 +473,10 @@ class APRSTuiApp(App):
             stream.add_packet(pkt)
             status_bar.increment_rx()
             self._refresh_stations()
+            # Notify map panel of station update
+            if self._map_visible:
+                with contextlib.suppress(Exception):
+                    self.query_one("#map-panel", MapPanel).notify_station_update()
         except Exception:
             pass
 
@@ -1036,3 +1076,86 @@ class APRSTuiApp(App):
         stream.toggle_raw()
         state = "ON" if stream._show_raw else "OFF"
         self.notify(f"Raw packets: {state}")
+
+    # ------------------------------------------------------------------
+    # Map panel (#52, #53, #68, #72)
+    # ------------------------------------------------------------------
+
+    def on_mount_map(self) -> None:
+        """Hide map panel initially — shown via m toggle."""
+        try:
+            map_panel = self.query_one("#map-panel", MapPanel)
+            map_panel.display = False
+        except Exception:
+            pass
+
+    def action_toggle_map(self) -> None:
+        """Toggle between station list and map panel (m key)."""
+        try:
+            station_panel = self.query_one("#station-panel", StationPanel)
+            map_panel = self.query_one("#map-panel", MapPanel)
+        except Exception:
+            self.notify("Map panel not available", severity="warning")
+            return
+
+        self._map_visible = not self._map_visible
+
+        if self._map_visible:
+            station_panel.display = False
+            map_panel.display = True
+            map_panel.focus()
+            map_panel.notify_station_update()
+        else:
+            map_panel.display = False
+            station_panel.display = True
+            station_panel.focus()
+
+    def action_map_auto_zoom(self) -> None:
+        """Toggle map auto-zoom."""
+        try:
+            map_panel = self.query_one("#map-panel", MapPanel)
+            map_panel.action_toggle_auto_zoom()
+            state = "ON" if map_panel.auto_zoom_enabled else "OFF"
+            self.notify(f"Map auto-zoom: {state}")
+        except Exception:
+            pass
+
+    def action_map_list(self) -> None:
+        """Show available offline maps."""
+        try:
+            from aprs_tui.map.registry import MapRegistry
+            registry = MapRegistry()
+            maps = registry.list_maps()
+            if not maps:
+                self.notify("No offline maps downloaded. Use :map download")
+                return
+            lines = [f"  {m.name} (z{m.min_zoom}-{m.max_zoom}, {m.size_mb:.0f}MB)" for m in maps]
+            self.notify("Available maps:\n" + "\n".join(lines), timeout=10)
+        except Exception as e:
+            self.notify(f"Map list error: {e}", severity="error")
+
+    async def action_map_download(self) -> None:
+        """Suspend TUI and run interactive map download."""
+        download_script = Path(__file__).parent / "map" / "downloader.py"
+        if not download_script.exists():
+            self.notify("Map downloader not found", severity="error")
+            return
+
+        # Run the wizard's map download step
+        wizard_path = Path(__file__).parent.parent / "wizard.py"
+        cmd = [sys.executable, str(wizard_path), "--section", "map"]
+        if self._config_path:
+            cmd.extend(["--config", str(self._config_path)])
+
+        with self.suspend():
+            subprocess.run(cmd, check=False)
+
+        # Reload map tiles after download
+        try:
+            map_panel = self.query_one("#map-panel", MapPanel)
+            map_panel._try_load_tiles()
+            map_panel.refresh()
+        except Exception:
+            pass
+
+        self.notify("Map data updated")

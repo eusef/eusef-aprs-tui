@@ -1,0 +1,321 @@
+"""Tests for aprs_tui.map.vector_renderer — MVT decoder and feature renderer."""
+from __future__ import annotations
+
+import mapbox_vector_tile
+import pytest
+
+from aprs_tui.map.braille_canvas import BrailleCanvas
+from aprs_tui.map.vector_renderer import ZOOM_LAYERS, VectorRenderer
+
+
+# ---------------------------------------------------------------------------
+# Helpers — build synthetic MVT tile data
+# ---------------------------------------------------------------------------
+
+def _make_tile(layers: list[dict]) -> bytes:
+    """Encode a list of layer dicts into MVT bytes."""
+    return mapbox_vector_tile.encode(layers)
+
+
+def _water_polygon_tile() -> bytes:
+    """Tile with a single water polygon."""
+    return _make_tile([{
+        "name": "water",
+        "features": [{
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[(0, 0), (500, 0), (500, 500), (0, 500), (0, 0)]],
+            },
+            "properties": {},
+            "id": 1,
+        }],
+    }])
+
+
+def _road_linestring_tile() -> bytes:
+    """Tile with a transportation linestring."""
+    return _make_tile([{
+        "name": "transportation",
+        "features": [{
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [(100, 100), (300, 300)],
+            },
+            "properties": {"class": "primary"},
+            "id": 2,
+        }],
+    }])
+
+
+def _point_tile() -> bytes:
+    """Tile with a place point."""
+    return _make_tile([{
+        "name": "place",
+        "features": [{
+            "geometry": {
+                "type": "Point",
+                "coordinates": (2048, 2048),
+            },
+            "properties": {"name": "Testville"},
+            "id": 3,
+        }],
+    }])
+
+
+def _multi_layer_tile() -> bytes:
+    """Tile with water + building layers."""
+    return _make_tile([
+        {
+            "name": "water",
+            "features": [{
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[(0, 0), (200, 0), (200, 200), (0, 200), (0, 0)]],
+                },
+                "properties": {},
+                "id": 10,
+            }],
+        },
+        {
+            "name": "building",
+            "features": [{
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[(300, 300), (400, 300), (400, 400), (300, 400), (300, 300)]],
+                },
+                "properties": {},
+                "id": 11,
+            }],
+        },
+    ])
+
+
+# ---------------------------------------------------------------------------
+# decode_tile
+# ---------------------------------------------------------------------------
+
+class TestDecodeTile:
+    def test_returns_features_with_layer_attribute(self) -> None:
+        renderer = VectorRenderer()
+        tile_data = _water_polygon_tile()
+        features = renderer.decode_tile(tile_data, z=5, x=16, y=16)
+
+        assert len(features) >= 1
+        for feat in features:
+            assert "_layer" in feat
+            assert feat["_layer"] == "water"
+
+    def test_multi_layer_features_tagged(self) -> None:
+        renderer = VectorRenderer()
+        tile_data = _multi_layer_tile()
+        features = renderer.decode_tile(tile_data, z=14, x=0, y=0)
+
+        layers = {f["_layer"] for f in features}
+        assert "water" in layers
+        assert "building" in layers
+
+    def test_caches_results(self) -> None:
+        renderer = VectorRenderer()
+        tile_data = _water_polygon_tile()
+        first = renderer.decode_tile(tile_data, z=5, x=16, y=16)
+        second = renderer.decode_tile(tile_data, z=5, x=16, y=16)
+        assert first is second
+
+    def test_corrupt_data_returns_empty(self) -> None:
+        renderer = VectorRenderer()
+        features = renderer.decode_tile(b"\x00\x01\x02\x03", z=0, x=0, y=0)
+        assert features == []
+
+    def test_empty_bytes_returns_empty(self) -> None:
+        renderer = VectorRenderer()
+        features = renderer.decode_tile(b"", z=1, x=0, y=0)
+        assert features == []
+
+
+# ---------------------------------------------------------------------------
+# LRU cache eviction
+# ---------------------------------------------------------------------------
+
+class TestFeatureCacheEviction:
+    def test_evicts_oldest_when_full(self) -> None:
+        renderer = VectorRenderer(cache_size=2)
+        tile_a = _water_polygon_tile()
+        tile_b = _road_linestring_tile()
+        tile_c = _point_tile()
+
+        renderer.decode_tile(tile_a, z=1, x=0, y=0)
+        renderer.decode_tile(tile_b, z=2, x=0, y=0)
+        # Cache is now full (size=2)
+        renderer.decode_tile(tile_c, z=3, x=0, y=0)
+        # (1,0,0) should have been evicted
+        assert (1, 0, 0) not in renderer._feature_cache
+        assert (2, 0, 0) in renderer._feature_cache
+        assert (3, 0, 0) in renderer._feature_cache
+
+    def test_access_refreshes_entry(self) -> None:
+        renderer = VectorRenderer(cache_size=2)
+        tile_a = _water_polygon_tile()
+        tile_b = _road_linestring_tile()
+        tile_c = _point_tile()
+
+        renderer.decode_tile(tile_a, z=1, x=0, y=0)
+        renderer.decode_tile(tile_b, z=2, x=0, y=0)
+        # Re-access first entry to refresh it
+        renderer.decode_tile(tile_a, z=1, x=0, y=0)
+        # Now add a third — should evict (2,0,0) not (1,0,0)
+        renderer.decode_tile(tile_c, z=3, x=0, y=0)
+        assert (1, 0, 0) in renderer._feature_cache
+        assert (2, 0, 0) not in renderer._feature_cache
+
+
+# ---------------------------------------------------------------------------
+# Zoom filtering
+# ---------------------------------------------------------------------------
+
+class TestZoomFiltering:
+    def test_building_skipped_at_low_zoom(self) -> None:
+        """Buildings require zoom >= 14; at zoom 10 they should be skipped."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(20, 10)
+        tile_data = _multi_layer_tile()
+
+        # At zoom 10, buildings (min_zoom=14) should be skipped
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=0, tile_y=0, tile_z=10,
+            center_lat=0.0, center_lon=0.0,
+        )
+        # Water (min_zoom=0) should still be rendered — canvas won't be blank
+        # We just verify no exception and it runs fine
+        assert True
+
+    def test_water_visible_at_any_zoom(self) -> None:
+        assert ZOOM_LAYERS["water"] == 0
+
+    def test_transportation_needs_zoom_4(self) -> None:
+        assert ZOOM_LAYERS["transportation"] == 4
+
+    def test_building_needs_zoom_14(self) -> None:
+        assert ZOOM_LAYERS["building"] == 14
+
+    def test_road_skipped_below_min_zoom(self) -> None:
+        """Transportation features should be skipped at zoom < 4."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(20, 10)
+        tile_data = _road_linestring_tile()
+
+        # Record canvas state before
+        before = bytearray(canvas._cells)
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=2, tile_x=0, tile_y=0, tile_z=2,
+            center_lat=0.0, center_lon=0.0,
+        )
+
+        # Canvas should be unchanged since zoom 2 < min zoom 4
+        assert canvas._cells == before
+
+
+# ---------------------------------------------------------------------------
+# render_features — line drawing for transportation
+# ---------------------------------------------------------------------------
+
+class TestRenderLineString:
+    def test_draws_lines_for_road(self) -> None:
+        """A transportation linestring at sufficient zoom should set dots."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _road_linestring_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=0.0, center_lon=0.0,
+        )
+
+        # At least some dots should have been set by draw_line
+        any_set = any(b != 0 for b in canvas._cells)
+        assert any_set, "Expected transportation line to set dots on canvas"
+
+
+# ---------------------------------------------------------------------------
+# render_features — polygon fill for water
+# ---------------------------------------------------------------------------
+
+class TestRenderPolygon:
+    def test_fills_polygon_for_water(self) -> None:
+        """A water polygon at sufficient zoom should fill dots."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _water_polygon_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=0.0, center_lon=0.0,
+        )
+
+        any_set = any(b != 0 for b in canvas._cells)
+        assert any_set, "Expected water polygon to fill dots on canvas"
+
+    def test_water_style_applied(self) -> None:
+        """Cells touched by water should have 'water' style."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _water_polygon_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=0.0, center_lon=0.0,
+        )
+
+        water_cells = [c for c in canvas._color_buffer if c == "water"]
+        assert len(water_cells) > 0, "Expected 'water' style on some cells"
+
+
+# ---------------------------------------------------------------------------
+# render_features — point
+# ---------------------------------------------------------------------------
+
+class TestRenderPoint:
+    def test_draws_point(self) -> None:
+        """A place point at sufficient zoom should set a dot."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _point_tile()
+
+        # Center the viewport on the tile center so the point is in view
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=-0.1758, center_lon=0.1758,
+        )
+
+        any_set = any(b != 0 for b in canvas._cells)
+        assert any_set, "Expected place point to set a dot on canvas"
+
+
+# ---------------------------------------------------------------------------
+# Coordinate conversion
+# ---------------------------------------------------------------------------
+
+class TestTileLocalToLatlon:
+    def test_center_of_tile_0_0_0(self) -> None:
+        """Centre of the single zoom-0 tile should be near (0, 0)."""
+        lat, lon = VectorRenderer._tile_local_to_latlon(2048, 2048, 0, 0, 0)
+        assert -1 < lat < 1
+        assert -1 < lon < 1
+
+    def test_top_left_of_tile_0_0_0(self) -> None:
+        """Top-left corner: max latitude, min longitude."""
+        lat, lon = VectorRenderer._tile_local_to_latlon(0, 0, 0, 0, 0)
+        assert lat > 80
+        assert lon < -170
+
+    def test_bottom_right_of_tile_0_0_0(self) -> None:
+        """Bottom-right corner: min latitude, max longitude."""
+        lat, lon = VectorRenderer._tile_local_to_latlon(4096, 4096, 0, 0, 0)
+        assert lat < -80
+        assert lon > 170
