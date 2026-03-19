@@ -32,10 +32,20 @@ Screen {
 }
 
 #map-panel {
-    width: 1fr;
+    display: none;
     height: 1fr;
     border: solid #30363d;
     border-title-color: #8b949e;
+}
+
+#map-panel.map-left {
+    display: block;
+    width: 2fr;
+}
+
+#map-panel.map-right {
+    display: block;
+    width: 1fr;
 }
 
 #map-panel:focus-within {

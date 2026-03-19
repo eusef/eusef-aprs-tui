@@ -103,6 +103,7 @@ class MapConfig(BaseModel):
     track_max_points: Annotated[int, Field(gt=0)] = 50
     track_max_age: Annotated[int, Field(gt=0)] = 3600
     maps_dir: str = ""
+    position: Literal["right", "left"] = "right"  # "right"=station list area, "left"=stream area
 
     @model_validator(mode="after")
     def _validate_zoom_range(self) -> Self:

@@ -66,6 +66,7 @@ class APRSCommandProvider(Provider):
             ("Toggle raw packet display", "raw"),
             ("Toggle APRS-IS packets", "aprs_is_toggle"),
             ("Toggle map panel", "map_toggle"),
+            ("Map: Switch position (left/right)", "map_position"),
             ("Map: Download offline maps", "map_download"),
             ("Map: List available maps", "map_list"),
             ("Map: Toggle auto-zoom", "map_auto_zoom"),
@@ -100,6 +101,8 @@ class APRSCommandProvider(Provider):
                 app.action_toggle_aprs_is()
             elif action_id == "map_toggle":
                 app.action_toggle_map()
+            elif action_id == "map_position":
+                app.action_toggle_map_position()
             elif action_id == "map_download":
                 await app.action_map_download()
             elif action_id == "map_list":
@@ -136,6 +139,7 @@ class APRSTuiApp(App):
 
         # Map toggle
         Binding("m", "toggle_map", "Map"),
+        Binding("M", "toggle_map_position", "Map Pos", show=False),
 
         # About screen
         Binding("a", "show_about", "About"),
@@ -189,6 +193,7 @@ class APRSTuiApp(App):
         self._beacon_manager = None  # Created after connection
         self._direwolf_manager = None  # Managed Direwolf subprocess
         self._map_visible = False  # Map panel toggle state
+        self._map_position = config.map.position  # "right" or "left"
 
     def compose(self) -> ComposeResult:
         yield StatusBar(self.callsign)
@@ -215,11 +220,7 @@ class APRSTuiApp(App):
     def on_mount(self) -> None:
         self.title = "APRS-TUI"
         self.sub_title = self.callsign
-        # Hide map panel initially (toggle with m key)
-        try:
-            self.query_one("#map-panel", MapPanel).display = False
-        except Exception:
-            pass
+        # Map panel starts hidden (CSS: display: none by default, no class)
         # Hide APRS-IS checkbox when primary transport is already APRS-IS
         if self.config.server.protocol == "aprs-is":
             try:
@@ -608,8 +609,11 @@ class APRSTuiApp(App):
         """Show key bindings help."""
         self.notify(
             "q=Quit  ?=Help  ^W=Config  b=Beacon  c=Compose  r=Raw  "
-            "i=APRS-IS  y=Copy  x=Cancel  j/k=Scroll  Tab=Next",
-            timeout=10,
+            "i=APRS-IS  y=Copy  x=Cancel  j/k=Scroll  Tab=Next\n"
+            "m=Map(large)  M=Map(small)  "
+            "Map: +/-=Zoom  hjkl=Pan  a=AutoZoom  0=Reset  "
+            "n/N=Station  t=Tracks",
+            timeout=15,
         )
 
     def action_show_about(self) -> None:
@@ -971,13 +975,22 @@ class APRSTuiApp(App):
             pass
 
     def action_toggle_aprs_is(self) -> None:
-        """Toggle APRS-IS packet visibility in the stream panel."""
+        """Toggle APRS-IS packet visibility in stream and map panels."""
         self._show_aprs_is = not self._show_aprs_is
 
         try:
             stream = self.query_one(StreamPanel)
             stream._hide_transport = "" if self._show_aprs_is else "APRS-IS"
             stream._rerender()
+        except Exception:
+            pass
+
+        # Sync map panel IS filter with app-level toggle
+        try:
+            map_panel = self.query_one("#map-panel", MapPanel)
+            if map_panel._filters.show_is_stations != self._show_aprs_is:
+                map_panel._filters.show_is_stations = self._show_aprs_is
+                map_panel._on_filter_changed()
         except Exception:
             pass
 
@@ -1089,26 +1102,82 @@ class APRSTuiApp(App):
         except Exception:
             pass
 
-    def action_toggle_map(self) -> None:
-        """Toggle between station list and map panel (m key)."""
+    def _show_map(self, position: str) -> None:
+        """Show the map in the given position, hiding whatever it replaces."""
         try:
             station_panel = self.query_one("#station-panel", StationPanel)
+            stream_panel = self.query_one("#stream-panel", StreamPanel)
             map_panel = self.query_one("#map-panel", MapPanel)
         except Exception:
             self.notify("Map panel not available", severity="warning")
             return
 
-        self._map_visible = not self._map_visible
-
+        # First, fully restore previous state
         if self._map_visible:
-            station_panel.display = False
-            map_panel.display = True
-            map_panel.focus()
-            map_panel.notify_station_update()
+            map_panel.remove_class("map-left", "map-right")
+            if self._map_position == "left":
+                stream_panel.display = True
+            else:
+                station_panel.display = True
+
+        # Now show map in the requested position
+        self._map_position = position
+        self._map_visible = True
+
+        if position == "left":
+            # Map takes the stream's place (large, 2fr)
+            stream_panel.display = False
+            map_panel.remove_class("map-right")
+            map_panel.add_class("map-left")
         else:
-            map_panel.display = False
+            # Map takes the station list's place (small, 1fr)
+            station_panel.display = False
+            map_panel.remove_class("map-left")
+            map_panel.add_class("map-right")
+
+        map_panel.focus()
+        map_panel.notify_station_update()
+
+        # Persist position preference
+        self.config.map.position = position
+        config_path = self._config_path or default_config_path()
+        try:
+            self.config.save(config_path)
+        except Exception:
+            pass
+
+    def _hide_map(self) -> None:
+        """Hide the map and restore what it replaced."""
+        try:
+            station_panel = self.query_one("#station-panel", StationPanel)
+            stream_panel = self.query_one("#stream-panel", StreamPanel)
+            map_panel = self.query_one("#map-panel", MapPanel)
+        except Exception:
+            return
+
+        map_panel.remove_class("map-left", "map-right")
+        self._map_visible = False
+
+        if self._map_position == "left":
+            stream_panel.display = True
+            stream_panel.focus()
+        else:
             station_panel.display = True
             station_panel.focus()
+
+    def action_toggle_map(self) -> None:
+        """m key: Toggle map in the Packet Stream (left/large) position."""
+        if self._map_visible and self._map_position == "left":
+            self._hide_map()
+        else:
+            self._show_map("left")
+
+    def action_toggle_map_position(self) -> None:
+        """M key: Toggle map in the Station List (right/small) position."""
+        if self._map_visible and self._map_position == "right":
+            self._hide_map()
+        else:
+            self._show_map("right")
 
     def action_map_auto_zoom(self) -> None:
         """Toggle map auto-zoom."""

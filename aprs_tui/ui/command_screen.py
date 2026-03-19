@@ -24,6 +24,20 @@ COMMANDS = [
     (":", "Commands", "Show this command list"),
     ("a", "About", "About APRS TUI, licenses, and legal notices"),
     ("Esc", "Close", "Close this overlay / cancel input"),
+    # -- Map panel --
+    ("m", "Map (large)", "Map replaces Packet Stream (large view)"),
+    ("M", "Map (small)", "Map replaces Station List (sidebar view)"),
+    ("+/-", "Zoom", "Zoom in/out on map"),
+    ("hjkl", "Pan", "Pan map (arrows also work, HJKL=fast)"),
+    ("a", "Auto Zoom", "Toggle auto-zoom (when map focused)"),
+    ("0", "Reset Zoom", "Re-enable auto-zoom and recalculate"),
+    ("n/N", "Stations", "Cycle to next/previous station on map"),
+    ("i", "Hide IS", "Toggle APRS-IS stations on map"),
+    ("R", "Hide RF", "Toggle RF stations on map"),
+    ("w", "Hide WX", "Toggle weather stations on map"),
+    ("d", "Hide Digi", "Toggle digipeaters/iGates on map"),
+    ("t", "Tracks", "Toggle station movement trails on map"),
+    ("f", "Fullscreen", "Fullscreen map (press f or Esc to exit)"),
 ]
 
 

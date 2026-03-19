@@ -27,7 +27,7 @@ from aprs_tui.map.tile_source import MBTilesSource
 from aprs_tui.map.track_renderer import TrackRenderer
 
 
-class MapPanel(Widget):
+class MapPanel(Widget, can_focus=True):
     """Interactive map panel rendering offline tiles with station overlays."""
 
     DEFAULT_CSS = """
@@ -49,6 +49,7 @@ class MapPanel(Widget):
         Binding("t", "toggle_tracks", "Tracks", show=False),
         Binding("n", "next_station", "Next Station", show=False),
         Binding("N", "prev_station", "Prev Station", show=False),
+        Binding("f", "toggle_fullscreen", "Fullscreen", show=False),
     ]
 
     # Reactive state
@@ -124,7 +125,7 @@ class MapPanel(Widget):
         """Render the map as a Rich Text block for Textual."""
         # Get available size
         w = self.size.width
-        h = self.size.height - 1  # reserve 1 row for status line
+        h = self.size.height - 2  # reserve 2 rows: status line + key hints
         if w <= 0 or h <= 0:
             return Text("")
 
@@ -151,8 +152,9 @@ class MapPanel(Widget):
             selected_callsign=self._selected_callsign,
         )
 
-        # Build status line
+        # Build status line and key hints
         status = self._build_status_line(w, stations)
+        hints = self._build_key_hints(w)
 
         # Combine all lines
         combined = Text()
@@ -160,6 +162,8 @@ class MapPanel(Widget):
             combined.append_text(line)
             combined.append("\n")
         combined.append_text(status)
+        combined.append("\n")
+        combined.append_text(hints)
         return combined
 
     def _build_status_line(
@@ -196,6 +200,37 @@ class MapPanel(Widget):
         status_text = status_text[:width].ljust(width)
 
         return Text(status_text)
+
+    def _build_key_hints(self, width: int) -> Text:
+        """Build the key hints line at the bottom of the map panel."""
+        hints = Text()
+        keys = [
+            ("+/-", "Zoom"),
+            ("hjkl", "Pan"),
+            ("a", "Auto"),
+            ("0", "Reset"),
+            ("n/N", "Stn"),
+            ("i", "IS"),
+            ("R", "RF"),
+            ("w", "WX"),
+            ("d", "Digi"),
+            ("t", "Trk"),
+            ("f", "Full"),
+            ("m", "Close"),
+        ]
+        for i, (key, label) in enumerate(keys):
+            if hints.cell_len >= width - 10:
+                break
+            if i > 0:
+                hints.append("  ", style="dim #484f58")
+            hints.append(key, style="bold #e3b341")
+            hints.append(":", style="dim #484f58")
+            hints.append(label, style="#8b949e")
+        # Pad to width
+        pad = width - hints.cell_len
+        if pad > 0:
+            hints.append(" " * pad)
+        return hints
 
     def notify_station_update(self) -> None:
         """Called when station data changes. Triggers a re-render."""
@@ -241,6 +276,25 @@ class MapPanel(Widget):
         if result:
             self.center_lat, self.center_lon, self.zoom = result
         self.refresh()
+
+    def action_toggle_fullscreen(self) -> None:
+        """Push a fullscreen map screen overlaying the entire app."""
+        from aprs_tui.map.fullscreen import FullscreenMapScreen
+        cfg = {
+            "own_lat": self._auto_zoom._own_lat,
+            "own_lon": self._auto_zoom._own_lon,
+            "auto_zoom_min": self._auto_zoom_min,
+            "auto_zoom_max": self._auto_zoom_max,
+            "default_zoom": self._default_zoom,
+            "show_is_stations": self._filters.show_is_stations,
+            "show_tracks": self._filters.show_tracks,
+        }
+        self.app.push_screen(FullscreenMapScreen(
+            station_tracker=self._station_tracker,
+            own_callsign=self._own_callsign,
+            map_config=cfg,
+            source_panel=self,
+        ))
 
     def _pan(self, dx_frac: float, dy_frac: float) -> None:
         """Pan the map by a fraction of the viewport."""

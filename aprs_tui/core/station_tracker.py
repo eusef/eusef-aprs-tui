@@ -49,14 +49,19 @@ def calc_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return (bearing + 360) % 360
 
 
+def _is_aprs_is_source(source: str) -> bool:
+    """Check if a transport source string represents APRS-IS."""
+    return source.startswith("APRS-IS")
+
+
 def is_rf_station(record: StationRecord) -> bool:
     """True if station was heard via any RF transport (not just APRS-IS)."""
-    return any(s != "APRS-IS" for s in record.sources)
+    return any(not _is_aprs_is_source(s) for s in record.sources)
 
 
 def is_is_only_station(record: StationRecord) -> bool:
     """True if station was heard ONLY via APRS-IS."""
-    return len(record.sources) > 0 and all(s == "APRS-IS" for s in record.sources)
+    return len(record.sources) > 0 and all(_is_aprs_is_source(s) for s in record.sources)
 
 
 class StationTracker:
