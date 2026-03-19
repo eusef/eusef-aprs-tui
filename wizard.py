@@ -382,14 +382,9 @@ def step_bluetooth_setup(plat: dict) -> tuple[str | None, int]:
         if ble_result is None:
             return None, 0
 
-        # UV-PRO / VR-N76 need hybrid BLE+Serial (BLE for RX, classic BT serial for TX)
-        # because macOS Core Bluetooth cannot negotiate BLE bonding for encrypted writes.
-        if tnc_type in ("ble-uvpro", "ble-vrn76"):
-            ble_address = ble_result[4:]  # strip "ble:" prefix
-            serial_device = _step_hybrid_serial(plat, hints.get(tnc_type, "UV-PRO"))
-            if serial_device:
-                return f"hybrid:{ble_address}|{serial_device}", 9600
-
+        # UV-PRO / VR-N76 work with pure BLE for both RX and TX.
+        # The write-with-response → write-without-response fallback in
+        # KissBleTransport handles the macOS bonding limitation.
         return ble_result, 0
 
     if tnc_type == "classic" and tnc_type not in _VERIFIED_CLASSIC:
