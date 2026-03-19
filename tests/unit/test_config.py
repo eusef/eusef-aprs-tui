@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from aprs_tui.config import AppConfig, default_config_path
+from aprs_tui.config import AppConfig, MapConfig, default_config_path
 
 # ==========================================================================
 # Config loading
@@ -342,3 +342,101 @@ class TestConfigWrite:
         original.save(out)
         loaded = AppConfig.load(out)
         assert loaded == original
+
+
+# ==========================================================================
+# MapConfig
+# ==========================================================================
+
+
+class TestMapConfig:
+    """Issue #70: MapConfig and its integration into AppConfig."""
+
+    def test_load_without_map_section(self, tmp_config_file):
+        """Existing configs without [map] load with defaults (backward compat)."""
+        path = tmp_config_file()
+        cfg = AppConfig.load(path)
+        assert cfg.map.enabled is True
+        assert cfg.map.auto_zoom is True
+        assert cfg.map.auto_zoom_min == 4
+        assert cfg.map.auto_zoom_max == 14
+        assert cfg.map.default_zoom == 10
+        assert cfg.map.render_mode == "braille"
+        assert cfg.map.track_max_points == 50
+
+    def test_load_with_full_map_section(self, tmp_config_file):
+        path = tmp_config_file()
+        with open(path, "a") as f:
+            f.write(
+                "\n[map]\n"
+                "enabled = false\n"
+                "auto_zoom = false\n"
+                "auto_zoom_min = 2\n"
+                "auto_zoom_max = 16\n"
+                "auto_zoom_timeout = 900\n"
+                "default_zoom = 8\n"
+                'render_mode = "ascii"\n'
+                "show_is_stations = false\n"
+                "show_tracks = false\n"
+                "track_max_points = 100\n"
+                "track_max_age = 7200\n"
+                'maps_dir = "/tmp/maps"\n'
+            )
+        cfg = AppConfig.load(path)
+        assert cfg.map.enabled is False
+        assert cfg.map.auto_zoom_min == 2
+        assert cfg.map.auto_zoom_max == 16
+        assert cfg.map.render_mode == "ascii"
+        assert cfg.map.maps_dir == "/tmp/maps"
+
+    def test_load_with_partial_map_section(self, tmp_config_file):
+        path = tmp_config_file()
+        with open(path, "a") as f:
+            f.write("\n[map]\nenabled = false\ndefault_zoom = 12\n")
+        cfg = AppConfig.load(path)
+        assert cfg.map.enabled is False
+        assert cfg.map.default_zoom == 12
+        assert cfg.map.auto_zoom is True  # default
+        assert cfg.map.render_mode == "braille"  # default
+
+    def test_invalid_zoom_range_rejected(self, config_factory):
+        data = config_factory(map={"auto_zoom_min": 15, "auto_zoom_max": 5})
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate(data)
+
+    def test_invalid_zoom_out_of_bounds(self, config_factory):
+        data = config_factory(map={"default_zoom": 20})
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate(data)
+
+    def test_invalid_render_mode_rejected(self, config_factory):
+        data = config_factory(map={"render_mode": "block"})
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate(data)
+
+    def test_invalid_timeout_rejected(self, config_factory):
+        data = config_factory(map={"auto_zoom_timeout": 0})
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate(data)
+
+    def test_invalid_track_max_rejected(self, config_factory):
+        data = config_factory(map={"track_max_points": 0})
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate(data)
+
+    def test_roundtrip_with_map(self, tmp_path):
+        original = AppConfig.model_validate({
+            "station": {"callsign": "N0CALL"},
+            "map": {
+                "enabled": False,
+                "auto_zoom_min": 2,
+                "auto_zoom_max": 16,
+                "render_mode": "ascii",
+                "maps_dir": "/tmp/maps",
+            },
+        })
+        out = tmp_path / "config.toml"
+        original.save(out)
+        loaded = AppConfig.load(out)
+        assert loaded == original
+        assert loaded.map.render_mode == "ascii"

@@ -6,3 +6,4 @@ platformdirs>=4.0
 pyserial>=3.5
 questionary>=2.0
 bleak>=0.21
+mercantile>=1.2

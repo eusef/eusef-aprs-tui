@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aprs_tui.protocol.types import APRSPacket
 
@@ -21,6 +21,8 @@ class StationRecord:
     last_info_type: str = ""
     distance_km: float | None = None
     bearing: float | None = None
+    sources: set[str] = field(default_factory=set)
+    position_history: list[tuple[float, float, float]] = field(default_factory=list)
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -47,13 +49,27 @@ def calc_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return (bearing + 360) % 360
 
 
+def is_rf_station(record: StationRecord) -> bool:
+    """True if station was heard via any RF transport (not just APRS-IS)."""
+    return any(s != "APRS-IS" for s in record.sources)
+
+
+def is_is_only_station(record: StationRecord) -> bool:
+    """True if station was heard ONLY via APRS-IS."""
+    return len(record.sources) > 0 and all(s == "APRS-IS" for s in record.sources)
+
+
 class StationTracker:
     def __init__(
-        self, own_lat: float | None = None, own_lon: float | None = None
+        self,
+        own_lat: float | None = None,
+        own_lon: float | None = None,
+        max_track_points: int = 50,
     ) -> None:
         self._stations: dict[str, StationRecord] = {}
         self._own_lat = own_lat
         self._own_lon = own_lon
+        self._max_track_points = max_track_points
 
     def update(self, pkt: APRSPacket) -> None:
         """Update station table from an incoming packet."""
@@ -69,12 +85,26 @@ class StationTracker:
         stn.packet_count += 1
         stn.last_info_type = pkt.info_type
 
+        # Track transport source
+        if pkt.transport:
+            stn.sources.add(pkt.transport)
+
         # Update position from position or mic-e packets
         if (
             pkt.info_type in ("position", "mic-e")
             and pkt.latitude is not None
             and pkt.longitude is not None
         ):
+            # Append to position history if position changed
+            if pkt.latitude != stn.latitude or pkt.longitude != stn.longitude:
+                stn.position_history.append(
+                    (pkt.latitude, pkt.longitude, time.time())
+                )
+                if len(stn.position_history) > self._max_track_points:
+                    stn.position_history = stn.position_history[
+                        -self._max_track_points :
+                    ]
+
             stn.latitude = pkt.latitude
             stn.longitude = pkt.longitude
             stn.symbol_table = pkt.symbol_table

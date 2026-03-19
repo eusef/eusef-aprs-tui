@@ -17,7 +17,7 @@ from typing import Annotated, Literal, Self
 
 import tomli_w
 from platformdirs import user_config_dir
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def default_config_path() -> Path:
@@ -88,6 +88,32 @@ class ConnectionConfig(BaseModel):
     health_timeout: int = 60
 
 
+class MapConfig(BaseModel):
+    """Map panel configuration."""
+
+    enabled: bool = True
+    auto_zoom: bool = True
+    auto_zoom_min: Annotated[int, Field(ge=0, le=18)] = 4
+    auto_zoom_max: Annotated[int, Field(ge=0, le=18)] = 14
+    auto_zoom_timeout: Annotated[int, Field(gt=0)] = 1800
+    default_zoom: Annotated[int, Field(ge=0, le=18)] = 10
+    render_mode: Literal["braille", "ascii"] = "braille"
+    show_is_stations: bool = True
+    show_tracks: bool = True
+    track_max_points: Annotated[int, Field(gt=0)] = 50
+    track_max_age: Annotated[int, Field(gt=0)] = 3600
+    maps_dir: str = ""
+
+    @model_validator(mode="after")
+    def _validate_zoom_range(self) -> Self:
+        if self.auto_zoom_min > self.auto_zoom_max:
+            raise ValueError(
+                f"auto_zoom_min ({self.auto_zoom_min}) must be <= "
+                f"auto_zoom_max ({self.auto_zoom_max})"
+            )
+        return self
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration.
 
@@ -99,6 +125,7 @@ class AppConfig(BaseModel):
     beacon: BeaconConfig = BeaconConfig()
     aprs_is: APRSISConfig = APRSISConfig()
     connection: ConnectionConfig = ConnectionConfig()
+    map: MapConfig = MapConfig()
 
     @classmethod
     def load(cls, path: Path | None = None) -> Self:

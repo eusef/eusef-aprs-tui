@@ -17,7 +17,12 @@ The station tracker maintains a table of all heard stations with:
 """
 from __future__ import annotations
 
-from aprs_tui.core.station_tracker import StationTracker, haversine
+from aprs_tui.core.station_tracker import (
+    StationTracker,
+    haversine,
+    is_rf_station,
+    is_is_only_station,
+)
 from aprs_tui.protocol.types import APRSPacket
 
 # ==========================================================================
@@ -348,3 +353,219 @@ class TestStationTrackerEdgeCases:
         # Station should still be there (no timeout implemented)
         assert tracker.count == 1
         assert tracker.get_station("W3ADO-1") is not None
+
+
+# ==========================================================================
+# Transport source tracking
+# ==========================================================================
+
+
+class TestTransportSourceTracking:
+    """Issue #54: Track transport source and position history."""
+
+    def test_rf_source_recorded(self):
+        """Station heard via RF transport has source recorded."""
+        tracker = StationTracker()
+        pkt = APRSPacket(
+            raw="W3ADO-1>APRS:pos",
+            source="W3ADO-1",
+            info_type="position",
+            latitude=40.0,
+            longitude=-75.0,
+            transport="KISS TCP",
+        )
+        tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert "KISS TCP" in stn.sources
+
+    def test_is_source_recorded(self):
+        """Station heard via APRS-IS has source recorded."""
+        tracker = StationTracker()
+        pkt = APRSPacket(
+            raw="W3ADO-1>APRS:pos",
+            source="W3ADO-1",
+            info_type="position",
+            latitude=40.0,
+            longitude=-75.0,
+            transport="APRS-IS",
+        )
+        tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert "APRS-IS" in stn.sources
+
+    def test_both_sources_recorded(self):
+        """Station heard via both RF and IS has both sources."""
+        tracker = StationTracker()
+        pkt_rf = APRSPacket(
+            raw="W3ADO-1>APRS:pos",
+            source="W3ADO-1",
+            info_type="position",
+            latitude=40.0,
+            longitude=-75.0,
+            transport="KISS TCP",
+        )
+        pkt_is = APRSPacket(
+            raw="W3ADO-1>APRS:pos",
+            source="W3ADO-1",
+            info_type="position",
+            latitude=40.0,
+            longitude=-75.0,
+            transport="APRS-IS",
+        )
+        tracker.update(pkt_rf)
+        tracker.update(pkt_is)
+        stn = tracker.get_station("W3ADO-1")
+        assert stn.sources == {"KISS TCP", "APRS-IS"}
+
+    def test_empty_transport_not_added(self):
+        """Packets with empty transport string don't add empty string to sources."""
+        tracker = StationTracker()
+        pkt = APRSPacket(
+            raw="W3ADO-1>APRS:test",
+            source="W3ADO-1",
+            info_type="status",
+            transport="",
+        )
+        tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert len(stn.sources) == 0
+
+    def test_is_rf_station(self):
+        """is_rf_station returns True for RF-heard stations."""
+        tracker = StationTracker()
+        pkt = APRSPacket(
+            raw="W3ADO-1>APRS:pos",
+            source="W3ADO-1",
+            info_type="position",
+            latitude=40.0,
+            longitude=-75.0,
+            transport="KISS TCP",
+        )
+        tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert is_rf_station(stn) is True
+        assert is_is_only_station(stn) is False
+
+    def test_is_is_only_station(self):
+        """is_is_only_station returns True for IS-only stations."""
+        tracker = StationTracker()
+        pkt = APRSPacket(
+            raw="W3ADO-1>APRS:pos",
+            source="W3ADO-1",
+            info_type="position",
+            latitude=40.0,
+            longitude=-75.0,
+            transport="APRS-IS",
+        )
+        tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert is_rf_station(stn) is False
+        assert is_is_only_station(stn) is True
+
+    def test_both_sources_classified_as_rf(self):
+        """Station heard on both RF and IS is classified as RF."""
+        tracker = StationTracker()
+        for transport in ("KISS TCP", "APRS-IS"):
+            pkt = APRSPacket(
+                raw="W3ADO-1>APRS:pos",
+                source="W3ADO-1",
+                info_type="position",
+                latitude=40.0,
+                longitude=-75.0,
+                transport=transport,
+            )
+            tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert is_rf_station(stn) is True
+        assert is_is_only_station(stn) is False
+
+
+# ==========================================================================
+# Position history
+# ==========================================================================
+
+
+class TestPositionHistory:
+    """Issue #54: Position history for track/trail rendering."""
+
+    def test_position_history_appended_on_change(self):
+        """Position history appends when lat/lon changes."""
+        tracker = StationTracker()
+        positions = [(40.0, -75.0), (40.1, -75.1), (40.2, -75.2)]
+        for lat, lon in positions:
+            pkt = APRSPacket(
+                raw="W3ADO-1>APRS:pos",
+                source="W3ADO-1",
+                info_type="position",
+                latitude=lat,
+                longitude=lon,
+            )
+            tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert len(stn.position_history) == 3
+        assert stn.position_history[0][0] == 40.0
+        assert stn.position_history[2][0] == 40.2
+
+    def test_position_history_not_appended_when_same(self):
+        """Position history does NOT append when position stays the same."""
+        tracker = StationTracker()
+        for _ in range(5):
+            pkt = APRSPacket(
+                raw="W3ADO-1>APRS:pos",
+                source="W3ADO-1",
+                info_type="position",
+                latitude=40.0,
+                longitude=-75.0,
+            )
+            tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        # First packet creates history entry (lat/lon was None -> 40.0),
+        # subsequent same-position packets do not
+        assert len(stn.position_history) == 1
+
+    def test_position_history_capped(self):
+        """Position history respects max_track_points."""
+        tracker = StationTracker(max_track_points=5)
+        for i in range(10):
+            pkt = APRSPacket(
+                raw="W3ADO-1>APRS:pos",
+                source="W3ADO-1",
+                info_type="position",
+                latitude=40.0 + i * 0.01,
+                longitude=-75.0,
+            )
+            tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert len(stn.position_history) == 5
+        # Should have the 5 most recent positions
+        assert stn.position_history[0][0] == 40.05
+
+    def test_position_history_has_timestamps(self):
+        """Position history entries contain timestamps."""
+        tracker = StationTracker()
+        pkt = APRSPacket(
+            raw="W3ADO-1>APRS:pos",
+            source="W3ADO-1",
+            info_type="position",
+            latitude=40.0,
+            longitude=-75.0,
+        )
+        tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert len(stn.position_history) == 1
+        lat, lon, ts = stn.position_history[0]
+        assert lat == 40.0
+        assert lon == -75.0
+        assert ts > 0  # valid timestamp
+
+    def test_non_position_packet_no_history(self):
+        """Status packets do not create position history entries."""
+        tracker = StationTracker()
+        pkt = APRSPacket(
+            raw="W3ADO-1>APRS:>status",
+            source="W3ADO-1",
+            info_type="status",
+        )
+        tracker.update(pkt)
+        stn = tracker.get_station("W3ADO-1")
+        assert len(stn.position_history) == 0
