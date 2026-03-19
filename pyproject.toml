@@ -22,8 +22,17 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM"]
 
 [tool.coverage.run]
 source = ["aprs_tui"]
-omit = ["tests/*"]
+omit = [
+    "tests/*",
+    "aprs_tui/__main__.py",
+    "aprs_tui/app.py",
+    "aprs_tui/ui/*",
+    "aprs_tui/transport/kiss_ble.py",
+    "aprs_tui/transport/kiss_serial.py",
+    "aprs_tui/core/direwolf.py",
+    "aprs_tui/discovery/*",
+]
 
 [tool.coverage.report]
-fail_under = 50
+fail_under = 80
 show_missing = true
