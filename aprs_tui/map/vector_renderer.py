@@ -16,7 +16,9 @@ from aprs_tui.map.tile_math import latlon_to_braille_pixel, tile_bounds
 # Layer visibility by minimum zoom level
 # ---------------------------------------------------------------------------
 
+# Supports both OpenMapTiles and VersaTiles layer names.
 ZOOM_LAYERS: dict[str, int] = {
+    # OpenMapTiles
     "water": 0,
     "waterway": 0,
     "landcover": 8,
@@ -25,10 +27,24 @@ ZOOM_LAYERS: dict[str, int] = {
     "building": 14,
     "boundary": 0,
     "place": 4,
+    # VersaTiles
+    "ocean": 0,
+    "water_polygons": 0,
+    "water_lines": 4,
+    "water_lines_labels": 6,
+    "boundaries": 0,
+    "boundary_labels": 4,
+    "streets": 6,
+    "street_labels": 10,
+    "land": 0,
+    "place_labels": 4,
+    "ferries": 8,
 }
 
-# Map MVT layer names to feature-type strings used by styles.py
+# Map MVT layer names to feature-type strings used by styles.py.
+# Supports both OpenMapTiles and VersaTiles schemas.
 _LAYER_TO_STYLE: dict[str, str] = {
+    # OpenMapTiles
     "water": "water",
     "waterway": "water",
     "landcover": "landuse",
@@ -37,6 +53,18 @@ _LAYER_TO_STYLE: dict[str, str] = {
     "building": "building",
     "boundary": "boundary",
     "place": "label",
+    # VersaTiles
+    "ocean": "water",
+    "water_polygons": "water",
+    "water_lines": "coastline",
+    "water_lines_labels": "label",
+    "boundaries": "boundary",
+    "boundary_labels": "label",
+    "streets": "road",
+    "street_labels": "label",
+    "land": "landuse",
+    "place_labels": "label",
+    "ferries": "road_minor",
 }
 
 
@@ -68,7 +96,10 @@ class VectorRenderer:
             return self._feature_cache[key]
 
         try:
-            decoded = mapbox_vector_tile.decode(tile_data)
+            decoded = mapbox_vector_tile.decode(
+                tile_data,
+                default_options={"y_coord_down": True},
+            )
         except Exception:
             decoded = {}
 
@@ -307,6 +338,9 @@ class VectorRenderer:
             canvas.set_cell_style(x0 // 2, y0 // 4, style_name)
             canvas.set_cell_style(x1 // 2, y1 // 4, style_name)
 
+    # Water/ocean layers — style only, no dot fill
+    _WATER_STYLES = frozenset({"water", "coastline"})
+
     def _draw_polygon(
         self,
         canvas: BrailleCanvas,
@@ -331,9 +365,20 @@ class VectorRenderer:
             )
             for c in exterior
         ]
-        if len(pixels) >= 3:
+        if len(pixels) < 3:
+            return
+
+        if style_name in self._WATER_STYLES:
+            # Water: set background style only — no dot fill.
+            # This gives a clean colored background without dense braille.
+            xs = [p[0] for p in pixels]
+            ys = [p[1] for p in pixels]
+            canvas.set_region_style(
+                min(xs), min(ys), max(xs), max(ys), style_name
+            )
+        else:
+            # Land features: fill with dots + apply style
             canvas.fill_polygon(pixels)
-            # Apply style to bounding box of the polygon
             xs = [p[0] for p in pixels]
             ys = [p[1] for p in pixels]
             canvas.set_region_style(

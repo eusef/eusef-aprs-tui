@@ -189,9 +189,12 @@ class TestDownloadProgressEta:
 
 
 def _make_mock_transport(tile_data: bytes = b"fake-tile-data") -> httpx.MockTransport:
-    """Create an httpx MockTransport that returns tile_data for all requests."""
+    """Create an httpx MockTransport that returns tile_data for all requests.
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    Uses an async handler for compatibility with AsyncClient.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=tile_data)
 
     return httpx.MockTransport(handler)
@@ -206,30 +209,16 @@ class TestDownloadCreatesMbtiles:
         transport = _make_mock_transport(tile_data)
         downloader = TileDownloader(
             tile_url_template="https://tiles.example.com/{z}/{x}/{y}.pbf",
+            transport=transport,
         )
 
-        # Monkeypatch httpx.Client to use our mock transport
-        original_client = httpx.Client
-
-        class MockClient(httpx.Client):
-            def __init__(self, **kwargs):
-                kwargs["transport"] = transport
-                super().__init__(**kwargs)
-
-        httpx.Client = MockClient  # type: ignore[misc]
-        try:
-            result = downloader.download(
-                output_path=output,
-                min_lat=40.0,
-                max_lat=40.1,
-                min_lon=-74.0,
-                max_lon=-73.9,
-                min_zoom=0,
-                max_zoom=1,
-                map_name="test-download",
-            )
-        finally:
-            httpx.Client = original_client  # type: ignore[misc]
+        result = downloader.download(
+            output_path=output,
+            min_lat=40.0, max_lat=40.1,
+            min_lon=-74.0, max_lon=-73.9,
+            min_zoom=0, max_zoom=1,
+            map_name="test-download",
+        )
 
         assert result == output
         assert output.exists()
@@ -257,30 +246,19 @@ class TestDownloadCreatesMbtiles:
         transport = _make_mock_transport(gzipped_data)
         downloader = TileDownloader(
             tile_url_template="https://tiles.example.com/{z}/{x}/{y}.pbf",
+            transport=transport,
         )
 
-        original_client = httpx.Client
-
-        class MockClient(httpx.Client):
-            def __init__(self, **kwargs):
-                kwargs["transport"] = transport
-                super().__init__(**kwargs)
-
-        httpx.Client = MockClient  # type: ignore[misc]
-        try:
-            downloader.download(
-                output_path=output,
-                min_lat=40.0, max_lat=40.1,
-                min_lon=-74.0, max_lon=-73.9,
-                min_zoom=0, max_zoom=0,
-                map_name="test",
-            )
-        finally:
-            httpx.Client = original_client  # type: ignore[misc]
+        downloader.download(
+            output_path=output,
+            min_lat=40.0, max_lat=40.1,
+            min_lon=-74.0, max_lon=-73.9,
+            min_zoom=0, max_zoom=0,
+            map_name="test",
+        )
 
         conn = sqlite3.connect(str(output))
         row = conn.execute("SELECT tile_data FROM tiles LIMIT 1").fetchone()
-        # Should be gzipped exactly once — decompressing should give original
         assert gzip.decompress(row[0]) == raw_data
         conn.close()
 
@@ -290,7 +268,7 @@ class TestDownloadResumeSkipsExisting:
         """Tiles already in the database should be skipped on resume."""
         output = tmp_path / "output.mbtiles"
 
-        # Pre-populate with one tile at zoom 0 (there's only 1 tile at z0)
+        # Pre-populate with one tile at zoom 0
         conn = sqlite3.connect(str(output))
         conn.execute("CREATE TABLE metadata (name TEXT, value TEXT)")
         conn.execute(
@@ -300,14 +278,11 @@ class TestDownloadResumeSkipsExisting:
             "UNIQUE(zoom_level, tile_column, tile_row))"
         )
         meta = [
-            ("name", "test"),
-            ("format", "pbf"),
+            ("name", "test"), ("format", "pbf"),
             ("bounds", "-74.0,40.0,-73.9,40.1"),
-            ("minzoom", "0"),
-            ("maxzoom", "0"),
+            ("minzoom", "0"), ("maxzoom", "0"),
         ]
         conn.executemany("INSERT INTO metadata (name, value) VALUES (?, ?)", meta)
-        # Insert the single z0 tile (TMS y = (1<<0)-1-0 = 0)
         conn.execute(
             "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
             "VALUES (0, 0, 0, ?)",
@@ -316,43 +291,27 @@ class TestDownloadResumeSkipsExisting:
         conn.commit()
         conn.close()
 
-        # Track progress
         progress_reports: list[DownloadProgress] = []
-
-        def on_progress(p: DownloadProgress) -> None:
-            progress_reports.append(p)
 
         transport = _make_mock_transport(b"new-tile-data")
         downloader = TileDownloader(
             tile_url_template="https://tiles.example.com/{z}/{x}/{y}.pbf",
-            progress_callback=on_progress,
+            progress_callback=lambda p: progress_reports.append(p),
+            transport=transport,
         )
 
-        original_client = httpx.Client
+        downloader.download(
+            output_path=output,
+            min_lat=40.0, max_lat=40.1,
+            min_lon=-74.0, max_lon=-73.9,
+            min_zoom=0, max_zoom=0,
+            map_name="test",
+        )
 
-        class MockClient(httpx.Client):
-            def __init__(self, **kwargs):
-                kwargs["transport"] = transport
-                super().__init__(**kwargs)
-
-        httpx.Client = MockClient  # type: ignore[misc]
-        try:
-            downloader.download(
-                output_path=output,
-                min_lat=40.0, max_lat=40.1,
-                min_lon=-74.0, max_lon=-73.9,
-                min_zoom=0, max_zoom=0,
-                map_name="test",
-            )
-        finally:
-            httpx.Client = original_client  # type: ignore[misc]
-
-        # The single z0 tile should have been skipped
         conn = sqlite3.connect(str(output))
         tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
         assert tile_count == 1  # Still just the pre-existing tile
 
-        # Verify the existing tile data was NOT overwritten
         row = conn.execute("SELECT tile_data FROM tiles").fetchone()
         assert gzip.decompress(row[0]) == b"existing-tile"
         conn.close()
@@ -360,41 +319,24 @@ class TestDownloadResumeSkipsExisting:
     def test_progress_callback_reports_skipped(self, tmp_path: Path) -> None:
         """Progress callback should report skipped tiles separately."""
         output = tmp_path / "output.mbtiles"
-
         progress_reports: list[DownloadProgress] = []
-
-        def on_progress(p: DownloadProgress) -> None:
-            progress_reports.append(p)
 
         transport = _make_mock_transport(b"tile")
         downloader = TileDownloader(
             tile_url_template="https://tiles.example.com/{z}/{x}/{y}.pbf",
-            progress_callback=on_progress,
+            progress_callback=lambda p: progress_reports.append(p),
+            transport=transport,
         )
 
-        original_client = httpx.Client
+        downloader.download(
+            output_path=output,
+            min_lat=-85.0, max_lat=85.0,
+            min_lon=-180.0, max_lon=179.9,
+            min_zoom=0, max_zoom=2,
+            map_name="test",
+        )
 
-        class MockClient(httpx.Client):
-            def __init__(self, **kwargs):
-                kwargs["transport"] = transport
-                super().__init__(**kwargs)
-
-        httpx.Client = MockClient  # type: ignore[misc]
-        try:
-            # Download enough tiles to trigger progress callback (multiple of 10)
-            downloader.download(
-                output_path=output,
-                min_lat=-85.0, max_lat=85.0,
-                min_lon=-180.0, max_lon=179.9,
-                min_zoom=0, max_zoom=2,
-                map_name="test",
-            )
-        finally:
-            httpx.Client = original_client  # type: ignore[misc]
-
-        # We should have received at least one progress report
         assert len(progress_reports) > 0
-        # Last report should show tiles processed
         last = progress_reports[-1]
         assert last.downloaded_tiles + last.skipped_tiles > 0
         assert last.total_tiles > 0

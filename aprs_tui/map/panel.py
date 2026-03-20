@@ -38,8 +38,10 @@ class MapPanel(Widget, can_focus=True):
     """
 
     BINDINGS = [
-        Binding("plus,equal", "zoom_in", "Zoom In", show=False),
+        Binding("plus", "zoom_in", "Zoom In", show=False),
+        Binding("equal", "zoom_in", "Zoom In", show=False),
         Binding("minus", "zoom_out", "Zoom Out", show=False),
+        Binding("underscore", "zoom_out", "Zoom Out", show=False),
         Binding("a", "toggle_auto_zoom", "Auto Zoom", show=False),
         Binding("0", "reset_auto_zoom", "Reset Zoom", show=False),
         Binding("i", "toggle_is", "IS Stations", show=False),
@@ -52,11 +54,12 @@ class MapPanel(Widget, can_focus=True):
         Binding("f", "toggle_fullscreen", "Fullscreen", show=False),
     ]
 
-    # Reactive state
+    # Reactive state — changes to these automatically trigger re-render
     center_lat: reactive[float] = reactive(0.0)
     center_lon: reactive[float] = reactive(0.0)
     zoom: reactive[float] = reactive(10.0)
     auto_zoom_enabled: reactive[bool] = reactive(True)
+    _render_seq: reactive[int] = reactive(0)  # bump to force re-render
 
     def __init__(
         self,
@@ -234,7 +237,7 @@ class MapPanel(Widget, can_focus=True):
 
     def notify_station_update(self) -> None:
         """Called when station data changes. Triggers a re-render."""
-        self.refresh()
+        self._render_seq += 1
 
     @property
     def selected_callsign(self) -> str | None:
@@ -308,8 +311,20 @@ class MapPanel(Widget, can_focus=True):
         self.refresh()
 
     def on_key(self, event: Key) -> None:
-        """Handle pan keys (hjkl, arrows, HJKL, shift+arrows)."""
+        """Handle pan and zoom keys directly for reliable key capture."""
         key = event.key
+        char = event.character
+
+        # Zoom keys — handle all variations of +/= and -/_
+        if char in ("+", "="):
+            self.action_zoom_in()
+            event.prevent_default()
+            return
+        if char in ("-", "_"):
+            self.action_zoom_out()
+            event.prevent_default()
+            return
+
         # Standard pan (25%)
         pan_keys = {
             "h": (-0.25, 0), "left": (-0.25, 0),

@@ -12,13 +12,47 @@ from aprs_tui.map.vector_renderer import ZOOM_LAYERS, VectorRenderer
 # Helpers — build synthetic MVT tile data
 # ---------------------------------------------------------------------------
 
+EXTENT = 4096
+
 def _make_tile(layers: list[dict]) -> bytes:
-    """Encode a list of layer dicts into MVT bytes."""
-    return mapbox_vector_tile.encode(layers)
+    """Encode a list of layer dicts into MVT bytes.
+
+    Coordinates are given in y-down (MVT spec) convention.  Since the
+    python encoder expects y-up and our decoder uses y_coord_down=True,
+    we flip y during encoding so that the round-trip is consistent.
+    """
+    flipped = []
+    for layer in layers:
+        new_layer = {**layer, "features": []}
+        for feat in layer["features"]:
+            geom = feat["geometry"]
+            new_geom = _flip_geom_y(geom, EXTENT)
+            new_layer["features"].append({**feat, "geometry": new_geom})
+        flipped.append(new_layer)
+    return mapbox_vector_tile.encode(flipped)
+
+
+def _flip_geom_y(geom: dict, extent: int) -> dict:
+    """Flip y coordinates for encoding (y-down → y-up for encoder)."""
+    gtype = geom["type"]
+    coords = geom["coordinates"]
+
+    def flip_pt(p):
+        return (p[0], extent - p[1])
+
+    if gtype == "Point":
+        return {"type": gtype, "coordinates": flip_pt(coords)}
+    elif gtype == "LineString":
+        return {"type": gtype, "coordinates": [flip_pt(p) for p in coords]}
+    elif gtype == "Polygon":
+        return {"type": gtype, "coordinates": [[flip_pt(p) for p in ring] for ring in coords]}
+    elif gtype == "MultiPolygon":
+        return {"type": gtype, "coordinates": [[[flip_pt(p) for p in ring] for ring in poly] for poly in coords]}
+    return geom
 
 
 def _water_polygon_tile() -> bytes:
-    """Tile with a single water polygon."""
+    """Tile with a single water polygon (y-down coords)."""
     return _make_tile([{
         "name": "water",
         "features": [{
@@ -33,7 +67,7 @@ def _water_polygon_tile() -> bytes:
 
 
 def _road_linestring_tile() -> bytes:
-    """Tile with a transportation linestring."""
+    """Tile with a transportation linestring (y-down coords)."""
     return _make_tile([{
         "name": "transportation",
         "features": [{
@@ -48,7 +82,7 @@ def _road_linestring_tile() -> bytes:
 
 
 def _point_tile() -> bytes:
-    """Tile with a place point."""
+    """Tile with a place point (y-down coords)."""
     return _make_tile([{
         "name": "place",
         "features": [{
@@ -245,7 +279,7 @@ class TestRenderLineString:
 
 class TestRenderPolygon:
     def test_fills_polygon_for_water(self) -> None:
-        """A water polygon at sufficient zoom should fill dots."""
+        """A water polygon should apply style (background) without filling dots."""
         renderer = VectorRenderer()
         canvas = BrailleCanvas(40, 20)
         tile_data = _water_polygon_tile()
@@ -256,8 +290,9 @@ class TestRenderPolygon:
             center_lat=0.0, center_lon=0.0,
         )
 
-        any_set = any(b != 0 for b in canvas._cells)
-        assert any_set, "Expected water polygon to fill dots on canvas"
+        # Water uses background styling, not dot fill
+        any_styled = any(s is not None for s in canvas._color_buffer)
+        assert any_styled, "Expected water polygon to apply style on canvas"
 
     def test_water_style_applied(self) -> None:
         """Cells touched by water should have 'water' style."""

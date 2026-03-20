@@ -89,13 +89,18 @@ def bounding_box_from_center(
 class TileDownloader:
     """Downloads vector tiles from a tile server into an MBTiles file."""
 
+    # Default: VersaTiles — free, open, no API key, OpenMapTiles schema
+    DEFAULT_TILE_URL = "https://tiles.versatiles.org/tiles/osm/{z}/{x}/{y}"
+
     def __init__(
         self,
-        tile_url_template: str = "https://tiles.example.com/{z}/{x}/{y}.pbf",
+        tile_url_template: str | None = None,
         progress_callback: Callable[[DownloadProgress], None] | None = None,
+        transport: object | None = None,
     ) -> None:
-        self._url_template = tile_url_template
+        self._url_template = tile_url_template or self.DEFAULT_TILE_URL
         self._progress_callback = progress_callback
+        self._transport = transport  # For testing: httpx.MockTransport
 
     def download(
         self,
@@ -107,9 +112,11 @@ class TileDownloader:
         min_zoom: int = 0,
         max_zoom: int = 14,
         map_name: str = "downloaded",
+        concurrency: int = 20,
     ) -> Path:
         """Download tiles for a region into an MBTiles file.
 
+        Uses concurrent HTTP requests for speed.
         Resumable: skips tiles already present in the database.
         Returns the output path.
         """
@@ -130,56 +137,107 @@ class TileDownloader:
                 for y in range(ul_tile.y, lr_tile.y + 1):
                     tiles.append((z, x, y))
 
+        # Filter out already-downloaded tiles (resume support)
+        existing_set: set[tuple[int, int, int]] = set()
+        for z, x, y in tiles:
+            tms_y = (1 << z) - 1 - y
+            if conn.execute(
+                "SELECT 1 FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                (z, x, tms_y),
+            ).fetchone():
+                existing_set.add((z, x, y))
+
         total = len(tiles)
+        skipped = len(existing_set)
+        to_fetch = [(z, x, y) for z, x, y in tiles if (z, x, y) not in existing_set]
+
         downloaded = 0
-        skipped = 0
         total_bytes = 0
         start_time = time.monotonic()
 
+        # Report initial progress (skipped tiles)
+        if self._progress_callback and skipped > 0:
+            self._progress_callback(
+                DownloadProgress(
+                    total_tiles=total,
+                    downloaded_tiles=0,
+                    skipped_tiles=skipped,
+                    bytes_downloaded=0,
+                    elapsed_seconds=0.0,
+                )
+            )
+
+        import asyncio
         import httpx
 
-        with httpx.Client(timeout=30.0) as client:
-            for z, x, y in tiles:
-                # Check if tile already exists (resume support)
+        transport = self._transport
+
+        async def _fetch_batch(batch: list[tuple[int, int, int]]) -> list[tuple[int, int, int, bytes]]:
+            """Fetch a batch of tiles concurrently."""
+            results: list[tuple[int, int, int, bytes]] = []
+            client_kwargs: dict = {
+                "timeout": 30.0,
+                "limits": httpx.Limits(
+                    max_connections=concurrency,
+                    max_keepalive_connections=concurrency,
+                ),
+                "headers": {"User-Agent": "APRS-TUI/1.0"},
+            }
+            if transport is not None:
+                client_kwargs["transport"] = transport
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                sem = asyncio.Semaphore(concurrency)
+
+                async def _fetch_one(z: int, x: int, y: int) -> None:
+                    async with sem:
+                        url = self._url_template.format(z=z, x=x, y=y)
+                        try:
+                            resp = await client.get(url)
+                            if resp.status_code == 200 and len(resp.content) > 0:
+                                results.append((z, x, y, resp.content))
+                        except httpx.HTTPError:
+                            pass
+
+                tasks = [_fetch_one(z, x, y) for z, x, y in batch]
+                await asyncio.gather(*tasks)
+            return results
+
+        # Process in batches for progress reporting + DB commits
+        batch_size = concurrency * 5  # 100 tiles per batch at concurrency=20
+        for i in range(0, len(to_fetch), batch_size):
+            batch = to_fetch[i : i + batch_size]
+
+            # Run async batch
+            fetched = asyncio.run(_fetch_batch(batch))
+
+            # Write to database
+            for z, x, y, tile_data in fetched:
                 tms_y = (1 << z) - 1 - y
-                existing = conn.execute(
-                    "SELECT 1 FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                    (z, x, tms_y),
-                ).fetchone()
+                if tile_data[:2] != b"\x1f\x8b":
+                    tile_data = gzip.compress(tile_data)
+                conn.execute(
+                    "INSERT OR IGNORE INTO tiles "
+                    "(zoom_level, tile_column, tile_row, tile_data) "
+                    "VALUES (?, ?, ?, ?)",
+                    (z, x, tms_y, tile_data),
+                )
+                total_bytes += len(tile_data)
+                downloaded += 1
 
-                if existing:
-                    skipped += 1
-                else:
-                    url = self._url_template.format(z=z, x=x, y=y)
-                    try:
-                        resp = client.get(url)
-                        if resp.status_code == 200:
-                            tile_data = resp.content
-                            # Store as gzip if not already compressed
-                            if tile_data[:2] != b"\x1f\x8b":
-                                tile_data = gzip.compress(tile_data)
-                            conn.execute(
-                                "INSERT OR IGNORE INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
-                                "VALUES (?, ?, ?, ?)",
-                                (z, x, tms_y, tile_data),
-                            )
-                            total_bytes += len(tile_data)
-                            downloaded += 1
-                    except httpx.HTTPError:
-                        pass  # Skip failed tiles
+            conn.commit()
 
-                # Report progress
-                if self._progress_callback and (downloaded + skipped) % 10 == 0:
-                    elapsed = time.monotonic() - start_time
-                    self._progress_callback(
-                        DownloadProgress(
-                            total_tiles=total,
-                            downloaded_tiles=downloaded,
-                            skipped_tiles=skipped,
-                            bytes_downloaded=total_bytes,
-                            elapsed_seconds=elapsed,
-                        )
+            # Report progress
+            if self._progress_callback:
+                elapsed = time.monotonic() - start_time
+                self._progress_callback(
+                    DownloadProgress(
+                        total_tiles=total,
+                        downloaded_tiles=downloaded,
+                        skipped_tiles=skipped,
+                        bytes_downloaded=total_bytes,
+                        elapsed_seconds=elapsed,
                     )
+                )
 
         conn.commit()
         conn.close()

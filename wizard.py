@@ -34,8 +34,20 @@ SECTION_MAP = {
     "station": ["station", "write"],
     "beacon": ["beacon", "write"],
     "aprs-is": ["aprs_is", "write"],
+    "map": ["map", "write"],
     "test": ["connection_test"],
 }
+
+SECTION_MENU = [
+    ("Full setup (all sections)", "all"),
+    ("Server / connection", "server"),
+    ("Bluetooth pairing", "bt"),
+    ("Station identity (callsign, SSID, position)", "station"),
+    ("Beacon settings", "beacon"),
+    ("APRS-IS gateway", "aprs-is"),
+    ("Map / offline tiles", "map"),
+    ("Connection test", "test"),
+]
 
 
 def detect_platform() -> dict:
@@ -1394,6 +1406,7 @@ def step_map_setup(config: AppConfig) -> AppConfig:
             task_id,
             completed=p.downloaded_tiles + p.skipped_tiles,
         )
+        progress.refresh()
 
     downloader = TileDownloader(progress_callback=on_progress)
 
@@ -1482,7 +1495,12 @@ APRS-IS:   {aprs_is_status}"""
 def main() -> None:
     """Run the APRS TUI Setup Wizard."""
     parser = argparse.ArgumentParser(description="APRS TUI Setup Wizard")
-    parser.add_argument("--section", default="all", choices=list(SECTION_MAP.keys()))
+    parser.add_argument(
+        "--section",
+        default=None,
+        choices=list(SECTION_MAP.keys()),
+        help="Jump directly to a section (skip menu)",
+    )
     parser.add_argument("--config", type=Path, default=None)
     args = parser.parse_args()
 
@@ -1496,7 +1514,22 @@ def main() -> None:
         config = AppConfig(station=StationConfig(callsign="N0CALL"))
         console.print("[dim]No existing config found, using defaults[/dim]")
 
-    steps = SECTION_MAP[args.section]
+    # If no --section given, show interactive menu
+    section = args.section
+    if section is None:
+        console.print("\n[bold blue]APRS TUI Setup Wizard[/bold blue]\n")
+        choices = [label for label, _ in SECTION_MENU]
+        answer = questionary.select(
+            "What would you like to configure?",
+            choices=choices,
+        ).ask()
+        if answer is None:
+            console.print("[dim]Cancelled.[/dim]")
+            return
+        # Find the section key for the selected label
+        section = next(key for label, key in SECTION_MENU if label == answer)
+
+    steps = SECTION_MAP[section]
 
     try:
         if "deps" in steps:

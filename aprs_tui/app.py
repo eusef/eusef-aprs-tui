@@ -474,12 +474,11 @@ class APRSTuiApp(App):
             stream.add_packet(pkt)
             status_bar.increment_rx()
             self._refresh_stations()
-            # Notify map panel of station update
-            if self._map_visible:
-                with contextlib.suppress(Exception):
-                    self.query_one("#map-panel", MapPanel).notify_station_update()
         except Exception:
             pass
+        # Always notify map panel so it re-renders with new stations
+        with contextlib.suppress(Exception):
+            self.query_one("#map-panel", MapPanel).notify_station_update()
 
     # ------------------------------------------------------------------
     # Message callbacks

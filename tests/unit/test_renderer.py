@@ -47,9 +47,38 @@ def _create_mbtiles(
     return path
 
 
+_EXTENT = 4096
+
+
+def _flip_y(coords, geom_type: str):
+    """Flip y coords from y-down (test convention) to y-up (encoder convention)."""
+    def fp(p):
+        return (p[0], _EXTENT - p[1])
+    if geom_type == "Polygon":
+        return [[fp(p) for p in ring] for ring in coords]
+    if geom_type == "LineString":
+        return [fp(p) for p in coords]
+    if geom_type == "Point":
+        return fp(coords)
+    return coords
+
+
 def _make_mvt_tile(layers: list[dict]) -> bytes:
-    """Encode layer dicts into MVT bytes."""
-    return mapbox_vector_tile.encode(layers)
+    """Encode layer dicts into MVT bytes.
+
+    Test coordinates use y-down convention (matching MVT spec).
+    We flip to y-up for the encoder since our decoder uses y_coord_down=True.
+    """
+    flipped = []
+    for layer in layers:
+        new_layer = {**layer, "features": []}
+        for feat in layer["features"]:
+            geom = feat["geometry"]
+            new_coords = _flip_y(geom["coordinates"], geom["type"])
+            new_geom = {**geom, "coordinates": new_coords}
+            new_layer["features"].append({**feat, "geometry": new_geom})
+        flipped.append(new_layer)
+    return mapbox_vector_tile.encode(flipped)
 
 
 def _water_polygon_tile() -> bytes:
@@ -160,8 +189,18 @@ class TestRenderWithTileSource:
         # We need to figure out which tile(s) the renderer will request
         # for center=(0, 0) at zoom 10.  Tile (512, 512) at z=10 covers
         # the area near (0, 0).
-        tile_data = _water_polygon_tile()
-        # TMS y-flip: tms_y = (1 << 10) - 1 - 512 = 511
+        # Use a road tile (produces dots) rather than water (background only)
+        tile_data = _make_mvt_tile([{
+            "name": "transportation",
+            "features": [{
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [(0, 0), (4096, 4096)],
+                },
+                "properties": {},
+                "id": 1,
+            }],
+        }])
         tms_y = (1 << 10) - 1 - 512
         tiles = [(10, 512, tms_y, tile_data)]
         metadata = {"name": "Test", "minzoom": "0", "maxzoom": "14"}
@@ -318,12 +357,23 @@ class TestRenderPlain:
 
 class TestCompositingOrder:
     def test_stations_drawn_on_top_of_base_map(self, tmp_path: Path) -> None:
-        """Station markers should overwrite base map content at their position.
+        """Station markers should appear in the composite output.
 
-        We verify this by rendering a tile with content, then adding a station
-        at the same area and checking the station label appears in the output.
+        We render a tile with a road (which produces dots), then add a station
+        and check the station label appears in the output.
         """
-        tile_data = _water_polygon_tile()
+        # Use a road tile (fills dots) rather than water (background only)
+        tile_data = _make_mvt_tile([{
+            "name": "transportation",
+            "features": [{
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [(0, 0), (4096, 4096)],
+                },
+                "properties": {},
+                "id": 1,
+            }],
+        }])
         # Place tile at z=10, x=512, y=512 which covers area near (0,0)
         tms_y = (1 << 10) - 1 - 512
         tiles = [(10, 512, tms_y, tile_data)]
