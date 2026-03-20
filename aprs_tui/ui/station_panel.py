@@ -11,17 +11,25 @@ from aprs_tui.core.station_tracker import StationRecord
 
 SORT_KEYS = ["last_heard", "callsign", "distance"]
 
-# Symbol display map (subset)
-SYMBOL_MAP = {
-    "/>": "[car]",
-    "/[": "[jog]",
-    "/-": "[hse]",
-    "/k": "[trk]",
-    "/_": "[wx]",
-    "/#": "[dgi]",
-    "/&": "[gw]",
-    "/b": "[bik]",
+SORT_COLUMNS = {
+    "Callsign":   {"key": "callsign",      "default_reverse": False},
+    "Last Heard": {"key": "last_heard",     "default_reverse": True},   # Most recent first
+    "Dist":       {"key": "distance",       "default_reverse": False},
+    "Brg":        {"key": "bearing",        "default_reverse": False},
+    "Pkts":       {"key": "packet_count",   "default_reverse": True},   # Most packets first
 }
+
+# Symbol display map – ~25 most common APRS primary symbols
+SYMBOL_MAP = {
+    "/>": "Car", "/[": "Jog", "/-": "Hse", "/k": "Trk",
+    "/_": "WX",  "/#": "Dgi", "/&": "GW",  "/b": "Bik",
+    "/O": "Bal", "/R": "RV",  "/Y": "Yht", "/u": "18W",
+    "/p": "Rov", "/s": "Boa", "/v": "Van", "/j": "Jep",
+    "/f": "FD",  "/a": "Amb", "/U": "Bus", "/X": "Hel",
+    "/g": "Air", "/^": "Ant", "\\n": "EM!", "/!": "Pol",
+    "/'": "Air", "/=": "Trn",
+}
+DEFAULT_SYMBOL = "---"
 
 
 def _format_age(seconds: float) -> str:
@@ -48,6 +56,13 @@ class StationPanel(DataTable):
             super().__init__()
             self.callsign = callsign
 
+    class SortChanged(Message):
+        """Posted when the sort column or direction changes."""
+        def __init__(self, sort_key: str, reverse: bool) -> None:
+            super().__init__()
+            self.sort_key = sort_key
+            self.reverse = reverse
+
     DEFAULT_CSS = """
     StationPanel {
         height: 1fr;
@@ -65,6 +80,8 @@ class StationPanel(DataTable):
         self.border_title = "Stations (0)"
         self._sort_key = "last_heard"
         self._sort_idx = 0
+        self._sort_column: str = "Last Heard"  # Default sort column
+        self._sort_reverse: bool = True         # Default for Last Heard
         self._callsigns: list[str] = []  # Track callsigns by row index
         self.selected_callsign: str = ""
         self._user_selected = False  # True once user explicitly selects a station
@@ -92,13 +109,13 @@ class StationPanel(DataTable):
         for stn in stations:
             age = now - stn.last_heard if stn.last_heard else 0
             sym_key = f"{stn.symbol_table or ''}{stn.symbol_code or ''}"
-            sym = SYMBOL_MAP.get(sym_key, "")
+            sym = SYMBOL_MAP.get(sym_key, DEFAULT_SYMBOL)
             dist = f"{stn.distance_km:.1f}km" if stn.distance_km is not None else ""
             brg = f"{stn.bearing:.0f}\u00b0" if stn.bearing is not None else ""
             # Chat indicator
             call_display = stn.callsign
             if stn.callsign.upper() in chats:
-                call_display = f"💬{stn.callsign}"
+                call_display = f"💬 {stn.callsign}"
             self.add_row(
                 call_display, sym, _format_age(age), dist, brg, str(stn.packet_count)
             )
@@ -142,12 +159,62 @@ class StationPanel(DataTable):
         """When station panel loses focus, keep selection but clear highlight."""
         pass  # Keep the highlight active even when unfocused
 
+    def select_callsign(self, callsign: str) -> None:
+        """Programmatically select a station row (called from app)."""
+        if callsign == self.selected_callsign:
+            return  # Guard against infinite loop
+        if callsign in self._callsigns:
+            self._user_selected = True
+            self.show_cursor = True
+            row_idx = self._callsigns.index(callsign)
+            with contextlib.suppress(Exception):
+                self.move_cursor(row=row_idx)
+            self.selected_callsign = callsign
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        """Handle column header click to change sort column/direction."""
+        column_label = event.label.plain if hasattr(event.label, 'plain') else str(event.label)
+        # Strip existing sort indicators
+        column_label = column_label.replace(" \u25b2", "").replace(" \u25bc", "").strip()
+        if column_label not in SORT_COLUMNS:
+            return  # "Sym" column, not sortable
+        if column_label == self._sort_column:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_column = column_label
+            self._sort_reverse = SORT_COLUMNS[column_label]["default_reverse"]
+        self._update_column_headers()
+        # Notify app to refresh
+        self.post_message(self.SortChanged(self.sort_key, self._sort_reverse))
+
+    def _update_column_headers(self) -> None:
+        """Update column headers to show sort indicator on active column."""
+        for col in self.columns.values():
+            label = col.label.plain if hasattr(col.label, 'plain') else str(col.label)
+            label = label.replace(" \u25b2", "").replace(" \u25bc", "").strip()
+            if label == self._sort_column:
+                indicator = " \u25bc" if self._sort_reverse else " \u25b2"
+                col.label = label + indicator
+            else:
+                col.label = label
+
     def cycle_sort(self) -> str:
         """Cycle through sort options. Returns the new sort key."""
         self._sort_idx = (self._sort_idx + 1) % len(SORT_KEYS)
         self._sort_key = SORT_KEYS[self._sort_idx]
+        # Also update column-based sort state to stay in sync
+        key_to_column = {v["key"]: k for k, v in SORT_COLUMNS.items()}
+        if self._sort_key in key_to_column:
+            self._sort_column = key_to_column[self._sort_key]
+            self._sort_reverse = SORT_COLUMNS[self._sort_column]["default_reverse"]
         return self._sort_key
 
     @property
     def sort_key(self) -> str:
-        return self._sort_key
+        if self._sort_column in SORT_COLUMNS:
+            return SORT_COLUMNS[self._sort_column]["key"]
+        return "last_heard"
+
+    @property
+    def sort_reverse(self) -> bool:
+        return self._sort_reverse

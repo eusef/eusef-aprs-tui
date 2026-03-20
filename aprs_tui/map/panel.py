@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from textual.binding import Binding
 from textual.events import Key
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from rich.text import Text
@@ -22,6 +23,7 @@ from aprs_tui.map.auto_zoom import AutoZoomController
 from aprs_tui.map.filters import MapFilters
 from aprs_tui.map.registry import MapRegistry
 from aprs_tui.map.renderer import MapRenderer
+from aprs_tui.map.station_overlay import LEGEND_ENTRIES
 from aprs_tui.map.tile_math import latlon_to_pixel, pixel_to_latlon
 from aprs_tui.map.tile_source import MBTilesSource
 from aprs_tui.map.track_renderer import TrackRenderer
@@ -29,6 +31,18 @@ from aprs_tui.map.track_renderer import TrackRenderer
 
 class MapPanel(Widget, can_focus=True):
     """Interactive map panel rendering offline tiles with station overlays."""
+
+    class StationSelected(Message):
+        """Posted when a station is selected on the map (n/N keys)."""
+        def __init__(self, callsign: str) -> None:
+            super().__init__()
+            self.callsign = callsign
+
+    class StationActivated(Message):
+        """Posted when Enter is pressed on a selected station."""
+        def __init__(self, callsign: str) -> None:
+            super().__init__()
+            self.callsign = callsign
 
     DEFAULT_CSS = """
     MapPanel {
@@ -52,6 +66,7 @@ class MapPanel(Widget, can_focus=True):
         Binding("n", "next_station", "Next Station", show=False),
         Binding("N", "prev_station", "Prev Station", show=False),
         Binding("f", "toggle_fullscreen", "Fullscreen", show=False),
+        Binding("enter", "activate_station", "Info", show=False),
     ]
 
     # Reactive state — changes to these automatically trigger re-render
@@ -107,6 +122,12 @@ class MapPanel(Widget, can_focus=True):
         self._registry: MapRegistry | None = None
         self._try_load_tiles()
 
+        # Legend overlay state
+        self._show_legend: bool = False
+
+        # Chat callsigns for map indicator
+        self._chat_callsigns: set[str] = set()
+
         # Render throttle
         self._last_render_time: float = 0.0
 
@@ -153,7 +174,12 @@ class MapPanel(Widget, can_focus=True):
             stations=stations,
             own_callsign=self._own_callsign,
             selected_callsign=self._selected_callsign,
+            chat_callsigns=self._chat_callsigns,
         )
+
+        # Overlay legend if toggled on
+        if self._show_legend:
+            lines = self._overlay_legend(lines, w, h)
 
         # Build status line and key hints
         status = self._build_status_line(w, stations)
@@ -219,6 +245,7 @@ class MapPanel(Widget, can_focus=True):
             ("d", "Digi"),
             ("t", "Trk"),
             ("f", "Full"),
+            ("?", "Key"),
             ("m", "Close"),
         ]
         for i, (key, label) in enumerate(keys):
@@ -235,6 +262,83 @@ class MapPanel(Widget, can_focus=True):
             hints.append(" " * pad)
         return hints
 
+    def _overlay_legend(
+        self, lines: list[Text], width: int, height: int
+    ) -> list[Text]:
+        """Overlay a legend box on the bottom-right of the map output lines."""
+        # Build legend box strings
+        # Find the widest content line to size the box
+        content_lines: list[tuple[str, str]] = []
+        for sym, desc in LEGEND_ENTRIES:
+            content_lines.append((sym, desc))
+
+        # Calculate box width: "| " + sym_col + " " + desc + " |"
+        # sym_col width = max symbol width (e.g. "(N)" is 3 chars)
+        sym_width = max(len(sym) for sym, _ in content_lines)
+        desc_width = max(len(desc) for _, desc in content_lines)
+        inner_width = sym_width + 1 + desc_width  # sym + space + desc
+        box_width = inner_width + 4  # "| " + content + " |"
+
+        # Build the box rows using Unicode box-drawing characters
+        title = " Key "
+        left_dashes = (box_width - 2 - len(title)) // 2
+        right_dashes = box_width - 2 - left_dashes - len(title)
+        top_border = "\u250c" + "\u2500" * left_dashes + title + "\u2500" * right_dashes + "\u2510"
+
+        bottom_border = "\u2514" + "\u2500" * (box_width - 2) + "\u2518"
+
+        box_rows: list[str] = [top_border]
+        for sym, desc in content_lines:
+            padded_sym = sym.rjust(sym_width)
+            padded_desc = desc.ljust(desc_width)
+            row = "\u2502 " + padded_sym + " " + padded_desc + " \u2502"
+            box_rows.append(row)
+        box_rows.append(bottom_border)
+
+        box_height = len(box_rows)
+
+        # Don't render if the map area is too small
+        if box_height > height or box_width > width:
+            return lines
+
+        # Determine placement: bottom-right of the map area
+        start_row = height - box_height
+        start_col = width - box_width
+
+        # Overlay the legend onto the map lines
+        result = list(lines)  # shallow copy
+        legend_style = "#8b949e on #0d1117"
+        for i, box_row in enumerate(box_rows):
+            line_idx = start_row + i
+            if line_idx < 0 or line_idx >= len(result):
+                continue
+
+            orig = result[line_idx]
+            # Get the plain text of the original line, pad to width
+            orig_plain = orig.plain
+            if len(orig_plain) < width:
+                orig_plain = orig_plain + " " * (width - len(orig_plain))
+
+            # Build a new Text line: original left part + legend box
+            new_line = Text()
+            # Copy the original line up to start_col character by character
+            # preserving styles from the original
+            if start_col > 0:
+                left_part = orig[:start_col]
+                new_line.append_text(left_part)
+                # Pad if the original was shorter than start_col
+                pad_needed = start_col - left_part.cell_len
+                if pad_needed > 0:
+                    new_line.append(" " * pad_needed)
+            new_line.append(box_row, style=legend_style)
+            result[line_idx] = new_line
+
+        return result
+
+    def set_chat_callsigns(self, callsigns: set[str]) -> None:
+        """Update the set of callsigns that have chat history."""
+        self._chat_callsigns = callsigns
+
     def notify_station_update(self) -> None:
         """Called when station data changes. Triggers a re-render."""
         self._render_seq += 1
@@ -247,6 +351,13 @@ class MapPanel(Widget, can_focus=True):
     def selected_callsign(self, value: str | None) -> None:
         self._selected_callsign = value
         self.refresh()
+
+    def select_station(self, callsign: str) -> None:
+        """Select a station by callsign (called externally)."""
+        if self._selected_callsign == callsign:
+            return  # Guard against infinite loop
+        self._selected_callsign = callsign
+        self._render_seq += 1  # Force re-render via reactive
 
     # ------------------------------------------------------------------
     # Zoom / Pan actions (#51)
@@ -322,6 +433,13 @@ class MapPanel(Widget, can_focus=True):
             return
         if char in ("-", "_"):
             self.action_zoom_out()
+            event.prevent_default()
+            return
+
+        # Legend toggle
+        if char == "?":
+            self._show_legend = not self._show_legend
+            self.refresh()
             event.prevent_default()
             return
 
@@ -405,6 +523,12 @@ class MapPanel(Widget, can_focus=True):
                 self.selected_callsign = calls[(idx + 1) % len(calls)]
             except ValueError:
                 self.selected_callsign = calls[0]
+        self.post_message(self.StationSelected(self._selected_callsign))
+
+    def action_activate_station(self) -> None:
+        """Open station info screen for the selected station."""
+        if self._selected_callsign:
+            self.post_message(self.StationActivated(self._selected_callsign))
 
     def action_prev_station(self) -> None:
         stations = self._get_filtered_stations()
@@ -420,3 +544,4 @@ class MapPanel(Widget, can_focus=True):
                 self.selected_callsign = calls[(idx - 1) % len(calls)]
             except ValueError:
                 self.selected_callsign = calls[-1]
+        self.post_message(self.StationSelected(self._selected_callsign))

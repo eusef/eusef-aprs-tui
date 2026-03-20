@@ -131,19 +131,34 @@ class StationTracker:
                 self._own_lat, self._own_lon, stn.latitude, stn.longitude
             )
 
-    def get_stations(self, sort_by: str = "last_heard") -> list[StationRecord]:
-        """Return all stations sorted by the given field."""
+    def get_stations(self, sort_by: str = "last_heard", reverse: bool | None = None) -> list[StationRecord]:
+        """Return all stations sorted by the given field.
+
+        Args:
+            sort_by: Field to sort by (last_heard, distance, callsign, bearing, packet_count).
+            reverse: Sort direction. If None, uses the default for the sort field.
+        """
         stations = list(self._stations.values())
         if sort_by == "last_heard":
-            stations.sort(key=lambda s: s.last_heard, reverse=True)
+            default_rev = True
+            stations.sort(key=lambda s: s.last_heard, reverse=reverse if reverse is not None else default_rev)
         elif sort_by == "distance":
             stations.sort(
                 key=lambda s: s.distance_km
                 if s.distance_km is not None
-                else float("inf")
+                else float("inf"),
+                reverse=reverse if reverse is not None else False,
             )
         elif sort_by == "callsign":
-            stations.sort(key=lambda s: s.callsign)
+            stations.sort(key=lambda s: s.callsign, reverse=reverse if reverse is not None else False)
+        elif sort_by == "bearing":
+            stations.sort(
+                key=lambda s: s.bearing if s.bearing is not None else float("inf"),
+                reverse=reverse if reverse is not None else False,
+            )
+        elif sort_by == "packet_count":
+            default_rev = True
+            stations.sort(key=lambda s: s.packet_count, reverse=reverse if reverse is not None else default_rev)
         return stations
 
     def get_station(self, callsign: str) -> StationRecord | None:

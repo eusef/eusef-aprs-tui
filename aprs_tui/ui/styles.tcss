@@ -119,4 +119,57 @@ StatusBar {
     color: #e6edf3;
     padding: 0 1;
     text-style: bold;
+    layout: horizontal;
+}
+
+AppFooter {
+    dock: bottom;
+    height: 1;
+    background: #1a2233;
+    color: #e6edf3;
+    padding: 0 1;
+}
+
+/* ── Responsive layout: width breakpoints ── */
+
+/* Medium width (80-119 cols) */
+Screen.-medium #stream-panel {
+    width: 3fr;
+}
+Screen.-medium #station-panel {
+    width: 2fr;
+}
+Screen.-medium #message-panel {
+    height: 8;
+}
+
+/* Narrow width (< 80 cols) */
+Screen.-narrow #main-panels {
+    layout: vertical;
+}
+Screen.-narrow #stream-panel {
+    width: 1fr;
+    height: 1fr;
+}
+Screen.-narrow #station-panel {
+    width: 1fr;
+    height: 1fr;
+}
+Screen.-narrow #message-panel {
+    height: 6;
+}
+
+/* ── Responsive layout: height breakpoints ── */
+
+/* Short terminal (24-39 rows) */
+Screen.-short #message-panel {
+    height: 6;
+}
+
+/* Very short terminal (< 24 rows) */
+Screen.-very-short #message-panel {
+    height: 2;
+}
+Screen.-very-short #msg-inbox {
+    display: none;
 }

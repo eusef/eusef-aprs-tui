@@ -64,6 +64,7 @@ class FullscreenMapScreen(Screen):
             panel._reactive_auto_zoom_enabled = self._source_panel.auto_zoom_enabled
             panel._selected_callsign = self._source_panel._selected_callsign
             panel._filters = self._source_panel._filters
+            panel._chat_callsigns = self._source_panel._chat_callsigns
         panel.focus()
 
     def action_close(self) -> None:

@@ -8,10 +8,12 @@ from dataclasses import dataclass, field
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Input, RichLog, Static
+
+from aprs_tui.ui.mini_map import MiniMapWidget
 
 
 @dataclass
@@ -59,7 +61,15 @@ class ChatScreen(ModalScreen[None]):
         border-title-color: #58a6ff;
         padding: 0 1;
     }
+    #chat-body {
+        height: 1fr;
+    }
+    #chat-minimap {
+        width: 28;
+        height: 100%;
+    }
     #chat-log {
+        width: 1fr;
         height: 1fr;
         margin: 0;
         padding: 0;
@@ -84,17 +94,36 @@ class ChatScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding("escape", "close_chat", "Close", priority=True),
+        Binding("ctrl+d", "delete_chat", "Delete", priority=True),
     ]
 
-    def __init__(self, callsign: str, own_callsign: str, **kwargs) -> None:
+    def __init__(self, callsign: str, own_callsign: str,
+                 own_lat: float | None = None, own_lon: float | None = None,
+                 peer_lat: float | None = None, peer_lon: float | None = None,
+                 **kwargs) -> None:
         super().__init__(**kwargs)
         self.peer_callsign = callsign.upper()
         self.own_callsign = own_callsign.upper()
         self.messages: list[ChatMessage] = []
+        self._own_lat = own_lat
+        self._own_lon = own_lon
+        self._peer_lat = peer_lat
+        self._peer_lon = peer_lon
 
     def compose(self) -> ComposeResult:
         with Vertical(id="chat-outer"):
-            yield RichLog(id="chat-log", wrap=True, markup=False)
+            with Horizontal(id="chat-body"):
+                # Mini map (only if both positions available)
+                if (self._own_lat is not None and self._own_lon is not None
+                        and self._peer_lat is not None and self._peer_lon is not None):
+                    yield MiniMapWidget(
+                        self._own_lat, self._own_lon,
+                        self._peer_lat, self._peer_lon,
+                        own_callsign=self.own_callsign,
+                        peer_callsign=self.peer_callsign,
+                        id="chat-minimap",
+                    )
+                yield RichLog(id="chat-log", wrap=True, markup=False)
             yield Input(
                 placeholder=f"Message to {self.peer_callsign}... (Enter to send)",
                 id="chat-input",
@@ -102,6 +131,7 @@ class ChatScreen(ModalScreen[None]):
             )
             yield Static(
                 "[dim]Enter[/dim] Send  [dim]Esc[/dim] Close  "
+                "[dim]Ctrl+D[/dim] Delete  "
                 "[dim]j/k[/dim] Scroll  [dim]67 char max[/dim]",
                 id="chat-footer",
                 markup=True,
@@ -109,6 +139,11 @@ class ChatScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         title = f" Chat: {self.own_callsign} \u2194 {self.peer_callsign} "
+        if (self._own_lat is not None and self._own_lon is not None
+                and self._peer_lat is not None and self._peer_lon is not None):
+            from aprs_tui.core.station_tracker import haversine
+            dist = haversine(self._own_lat, self._own_lon, self._peer_lat, self._peer_lon)
+            title += f"\u2014 {dist:.1f} km "
         self.query_one("#chat-outer").border_title = title
         # Render any pre-loaded history
         for msg in self.messages:
@@ -179,9 +214,19 @@ class ChatScreen(ModalScreen[None]):
     def action_close_chat(self) -> None:
         self.dismiss(None)
 
+    def action_delete_chat(self) -> None:
+        self.post_message(self.DeleteChat(self.peer_callsign))
+        self.dismiss(None)
+
     class SendChatMessage(Message):
         """Posted when user sends a message from the chat screen."""
         def __init__(self, callsign: str, text: str) -> None:
             super().__init__()
             self.callsign = callsign
             self.text = text
+
+    class DeleteChat(Message):
+        """Posted when user deletes a chat conversation."""
+        def __init__(self, callsign: str) -> None:
+            super().__init__()
+            self.callsign = callsign

@@ -9,6 +9,7 @@ Issue #28: Config reload after wizard return.
 Issue #39: Command palette (Ctrl+P / :).
 Issue #40: Packet filter (/ key).
 Issue #41: Raw packet toggle (r key).
+Issue #75: Responsive layout with terminal size breakpoints.
 Wires ConnectionManager + PacketBus + StreamPanel + StatusBar.
 """
 from __future__ import annotations
@@ -26,7 +27,7 @@ from textual.binding import Binding
 from textual.command import Hit, Hits, Provider
 from textual.containers import Horizontal
 from textual.message import Message
-from textual.widgets import Footer, Input
+from textual.widgets import Input
 
 from aprs_tui.config import AppConfig, default_config_path
 from aprs_tui.core.connection import ConnectionManager
@@ -39,7 +40,9 @@ from aprs_tui.transport.kiss_tcp import KissTcpTransport
 from aprs_tui.map.panel import MapPanel
 from aprs_tui.ui.message_panel import MessagePanel
 from aprs_tui.ui.station_panel import StationPanel
+from aprs_tui.ui.footer import AppFooter
 from aprs_tui.ui.status_bar import StatusBar
+from aprs_tui.ui.station_info_screen import StationInfoScreen
 from aprs_tui.ui.stream_panel import StreamPanel
 
 if TYPE_CHECKING:
@@ -177,6 +180,8 @@ class APRSTuiApp(App):
         self._aprs_is_manager: ConnectionManager | None = None
         self._tx_lock = asyncio.Lock()
         self._show_aprs_is = True
+        self._station_sort_key = "last_heard"
+        self._station_sort_reverse = True
         self._active_chats: dict[str, ChatScreen] = {}  # callsign -> screen
         self._station_tracker = StationTracker(
             own_lat=config.station.latitude or None,
@@ -215,7 +220,7 @@ class APRSTuiApp(App):
                 id="map-panel",
             )
         yield MessagePanel(callsign=self.callsign, id="message-panel")
-        yield Footer()
+        yield AppFooter(id="app-footer")
 
     def on_mount(self) -> None:
         self.title = "APRS-TUI"
@@ -234,6 +239,27 @@ class APRSTuiApp(App):
         if (self.config.aprs_is.enabled
                 and self.config.server.protocol != "aprs-is"):
             self.run_worker(self._connect_aprs_is(), group="aprs-is")
+
+    def on_resize(self, event) -> None:
+        """Adapt layout to terminal size using CSS classes."""
+        w = event.size.width
+        h = event.size.height
+
+        screen = self.screen
+
+        # Width classes
+        screen.remove_class("-medium", "-narrow")
+        if w < 80:
+            screen.add_class("-narrow")
+        elif w < 120:
+            screen.add_class("-medium")
+
+        # Height classes
+        screen.remove_class("-short", "-very-short")
+        if h < 24:
+            screen.add_class("-very-short")
+        elif h < 40:
+            screen.add_class("-short")
 
     async def _connect(self) -> None:
         """Set up transport and connection manager, then start reading."""
@@ -292,6 +318,8 @@ class APRSTuiApp(App):
 
         status_bar = self.query_one(StatusBar)
         status_bar.update_state(ConnectionState.CONNECTING, transport.display_name)
+        footer = self.query_one(AppFooter)
+        footer.update_rf_state(ConnectionState.CONNECTING, transport.display_name)
 
         try:
             await self._connection_manager.connect()
@@ -324,6 +352,7 @@ class APRSTuiApp(App):
                 self._beacon_manager.enable()
         except Exception:
             status_bar.update_state(ConnectionState.FAILED, transport.display_name)
+            footer.update_rf_state(ConnectionState.FAILED, transport.display_name)
 
         # APRS-IS is started independently from on_mount, not here
 
@@ -407,6 +436,8 @@ class APRSTuiApp(App):
             and self.config.aprs_is.passcode != -1
         )
         self.call_later(self._ui_update_aprs_is_checkbox, tx_available)
+        # Update footer APRS-IS state
+        self.call_later(self._ui_update_is_state, state)
 
     def _on_aprs_is_packet(self, pkt: APRSPacket) -> None:
         """Handle packets from APRS-IS (secondary transport)."""
@@ -457,6 +488,19 @@ class APRSTuiApp(App):
             status_bar.update_state(state, transport_name)
         except Exception:
             pass
+        try:
+            footer = self.query_one(AppFooter)
+            footer.update_rf_state(state, transport_name)
+        except Exception:
+            pass
+
+    def _ui_update_is_state(self, state: ConnectionState) -> None:
+        """Update footer APRS-IS state - runs on UI thread."""
+        try:
+            footer = self.query_one(AppFooter)
+            footer.update_is_state(state)
+        except Exception:
+            pass
 
     def _ui_update_aprs_is_checkbox(self, tx_available: bool) -> None:
         """Enable/disable the APRS-IS checkbox based on gateway state."""
@@ -476,6 +520,9 @@ class APRSTuiApp(App):
             self._refresh_stations()
         except Exception:
             pass
+        # Increment footer RX counter
+        with contextlib.suppress(Exception):
+            self.query_one(AppFooter).increment_rx()
         # Always notify map panel so it re-renders with new stations
         with contextlib.suppress(Exception):
             self.query_one("#map-panel", MapPanel).notify_station_update()
@@ -565,11 +612,12 @@ class APRSTuiApp(App):
     async def action_quit(self) -> None:
         """Quit the application, disconnecting cleanly."""
         try:
-            # Save all active chats to disk
+            # Save all active chats to disk (only if they have messages)
             from aprs_tui.core.chat_store import save_chat
             for callsign, chat in self._active_chats.items():
-                msgs = [m.to_dict() for m in chat.messages]
-                save_chat(callsign, msgs)
+                if chat.messages:
+                    msgs = [m.to_dict() for m in chat.messages]
+                    save_chat(callsign, msgs)
 
             # Stop beacon
             if self._beacon_manager and self._beacon_manager.enabled:
@@ -794,18 +842,53 @@ class APRSTuiApp(App):
             self.notify("Beacon transmitted", timeout=3)
         except Exception:
             pass
+        with contextlib.suppress(Exception):
+            self.query_one(AppFooter).increment_tx()
 
     def on_station_panel_station_selected(self, event: StationPanel.StationSelected) -> None:
-        """Highlight packets from selected station in the stream."""
+        """Highlight packets from selected station in the stream and on the map."""
         try:
             stream = self.query_one(StreamPanel)
             stream.set_highlight_station(event.callsign)
         except Exception:
             pass
+        try:
+            map_panel = self.query_one(MapPanel)
+            map_panel.select_station(event.callsign)
+        except Exception:
+            pass
+
+    def on_map_panel_station_selected(self, event: MapPanel.StationSelected) -> None:
+        """Highlight station in station list and stream when selected on map."""
+        try:
+            station_panel = self.query_one(StationPanel)
+            station_panel.select_callsign(event.callsign)
+        except Exception:
+            pass
+        try:
+            self.query_one(StreamPanel).set_highlight_station(event.callsign)
+        except Exception:
+            pass
+
+    def on_map_panel_station_activated(self, event: MapPanel.StationActivated) -> None:
+        """Open station info screen when Enter is pressed on a map station."""
+        station = self._station_tracker.get_station(event.callsign)
+        if station:
+            self.push_screen(StationInfoScreen(station))
+
+    def on_station_info_screen_open_chat(self, event: StationInfoScreen.OpenChat) -> None:
+        """Open chat when Enter is pressed on the station info screen."""
+        self._open_chat(event.callsign)
 
     def on_station_panel_station_activated(self, event: StationPanel.StationActivated) -> None:
         """Open a chat screen with the selected station."""
         self._open_chat(event.callsign)
+
+    def on_station_panel_sort_changed(self, event: StationPanel.SortChanged) -> None:
+        """Update sort state and refresh station list when sort column/direction changes."""
+        self._station_sort_key = event.sort_key
+        self._station_sort_reverse = event.reverse
+        self._refresh_stations()
 
     def _open_chat(self, callsign: str) -> None:
         """Open or resume a chat screen with a station."""
@@ -814,17 +897,32 @@ class APRSTuiApp(App):
 
         callsign = callsign.upper()
 
+        # Look up positions for mini map
+        peer_station = self._station_tracker.get_station(callsign)
+        own_lat = self.config.station.latitude
+        own_lon = self.config.station.longitude
+        peer_lat = peer_station.latitude if peer_station else None
+        peer_lon = peer_station.longitude if peer_station else None
+
         # Reuse in-memory chat if we have one this session
         if callsign in self._active_chats:
             old_chat = self._active_chats[callsign]
-            chat = ChatScreen(callsign=callsign, own_callsign=self.callsign)
+            chat = ChatScreen(
+                callsign=callsign, own_callsign=self.callsign,
+                own_lat=own_lat, own_lon=own_lon,
+                peer_lat=peer_lat, peer_lon=peer_lon,
+            )
             chat.messages = old_chat.messages
             self._active_chats[callsign] = chat
             self.push_screen(chat)
             return
 
         # Create new chat screen
-        chat = ChatScreen(callsign=callsign, own_callsign=self.callsign)
+        chat = ChatScreen(
+            callsign=callsign, own_callsign=self.callsign,
+            own_lat=own_lat, own_lon=own_lon,
+            peer_lat=peer_lat, peer_lon=peer_lon,
+        )
 
         # Load persisted history from disk
         stored = load_chat(callsign)
@@ -846,13 +944,25 @@ class APRSTuiApp(App):
         self._active_chats[callsign] = chat
 
         def _on_chat_dismiss(result) -> None:
-            # Save chat to disk when closed
+            # Save chat to disk when closed (only if there are messages)
             if callsign in self._active_chats:
-                msgs = [m.to_dict() for m in self._active_chats[callsign].messages]
-                save_chat(callsign, msgs)
+                chat_msgs = self._active_chats[callsign].messages
+                if chat_msgs:
+                    msgs = [m.to_dict() for m in chat_msgs]
+                    save_chat(callsign, msgs)
                 self._refresh_stations()  # Update chat indicators
 
         self.push_screen(chat, callback=_on_chat_dismiss)
+
+    def on_chat_screen_delete_chat(self, event) -> None:
+        """Handle chat deletion from a chat screen."""
+        from aprs_tui.core.chat_store import delete_chat
+        callsign = event.callsign.upper()
+        delete_chat(callsign)
+        # Remove from active chats so dismiss callback won't re-save
+        self._active_chats.pop(callsign, None)
+        self.notify(f"Chat with {callsign} deleted")
+        self._refresh_stations()
 
     def on_chat_screen_send_chat_message(self, event) -> None:
         """Handle send from a chat screen."""
@@ -960,6 +1070,8 @@ class APRSTuiApp(App):
         """Just increment RX counter without adding to stream."""
         with contextlib.suppress(Exception):
             self.query_one(StatusBar).increment_rx()
+        with contextlib.suppress(Exception):
+            self.query_one(AppFooter).increment_rx()
 
     def _ui_store_hidden_packet(self, pkt: APRSPacket) -> None:
         """Store packet in stream panel without displaying it."""
@@ -972,6 +1084,8 @@ class APRSTuiApp(App):
             status_bar.increment_rx()
         except Exception:
             pass
+        with contextlib.suppress(Exception):
+            self.query_one(AppFooter).increment_rx()
 
     def action_toggle_aprs_is(self) -> None:
         """Toggle APRS-IS packet visibility in stream and map panels."""
@@ -1029,7 +1143,10 @@ class APRSTuiApp(App):
             from aprs_tui.core.chat_store import list_chat_callsigns
 
             station_panel = self.query_one(StationPanel)
-            stations = self._station_tracker.get_stations(sort_by=station_panel.sort_key)
+            stations = self._station_tracker.get_stations(
+                sort_by=self._station_sort_key,
+                reverse=self._station_sort_reverse,
+            )
 
             if not self._show_aprs_is:
                 rf_callsigns = set()
@@ -1044,6 +1161,13 @@ class APRSTuiApp(App):
             chat_calls.update(self._active_chats.keys())
 
             station_panel.refresh_stations(stations, chat_callsigns=chat_calls)
+
+            # Update map panel chat indicators
+            try:
+                map_panel = self.query_one(MapPanel)
+                map_panel.set_chat_callsigns(chat_calls)
+            except Exception:
+                pass
         except Exception:
             pass
 

@@ -41,6 +41,7 @@ class MapRenderer:
         stations: list[StationRecord] | None = None,
         own_callsign: str = "",
         selected_callsign: str | None = None,
+        chat_callsigns: set[str] | None = None,
     ) -> list[Text]:
         """Render a complete map frame as Rich Text objects.
 
@@ -57,7 +58,9 @@ class MapRenderer:
         # 2. Render station overlay
         if stations:
             overlay = StationOverlay(canvas, zoom, center_lat, center_lon)
-            overlay.render_stations(stations, own_callsign, selected_callsign)
+            overlay.render_stations(
+                stations, own_callsign, selected_callsign, chat_callsigns
+            )
 
         return canvas.render_rich()
 

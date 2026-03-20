@@ -29,6 +29,21 @@ SYMBOL_MAP: dict[str, str] = {
 }
 DEFAULT_SYMBOL = "*"
 
+# Legend entries — symbol character → human-readable description.
+# Exported for use by the map panel legend overlay.
+LEGEND_ENTRIES: list[tuple[str, str]] = [
+    (">", "Car/Mobile"),
+    ("H", "House/QTH"),
+    ("#", "Digipeater"),
+    ("&", "Gateway"),
+    ("W", "Weather"),
+    ("P", "Pedestrian"),
+    ("b", "Bicycle"),
+    ("k", "Truck"),
+    ("*", "Other"),
+    ("(N)", "Cluster"),
+]
+
 # Cluster threshold — cells with this many or more stations render as a count.
 CLUSTER_THRESHOLD = 3
 
@@ -39,6 +54,19 @@ _STYLE_RF = "station_rf"
 _STYLE_IS = "station_is"
 _STYLE_EMERGENCY = "station_emergency"
 _STYLE_CLUSTER = "station_rf"
+_STYLE_CHAT = "station_chat"
+
+
+def _cluster_radius(zoom: float) -> int:
+    """Return cluster grouping radius in character cells based on zoom level."""
+    if zoom >= 14:
+        return 1  # Tight: same-cell only (current behavior)
+    elif zoom >= 11:
+        return 2  # Medium: 2-cell radius
+    elif zoom >= 8:
+        return 3  # Wide: 3-cell radius
+    else:
+        return 5  # Very wide: 5-cell radius
 
 
 def _symbol_char(station: StationRecord) -> str:
@@ -136,12 +164,14 @@ class StationOverlay:
         stations: list[StationRecord],
         own_callsign: str,
         selected_callsign: str | None = None,
+        chat_callsigns: set[str] | None = None,
     ) -> None:
         """Plot all stations onto the canvas with collision-aware labels.
 
         Steps:
         1. Convert all stations to pixel positions, discard out-of-bounds.
-        2. Group by character cell; cells with 3+ stations become clusters.
+        2. Group by zoom-dependent grid cells; cells with 3+ stations become
+           clusters.  Own station and selected station are never clustered.
         3. Render clusters as count indicators like ``(3)``.
         4. Render remaining individual stations with collision-aware label
            placement using an occupancy grid.
@@ -173,22 +203,44 @@ class StationOverlay:
         if not positioned:
             return
 
-        # --- Phase 2: group by character cell ------------------------------
+        # --- Phase 2: zoom-dependent grouping --------------------------------
+        radius = _cluster_radius(self._zoom)
+
+        # Extract priority stations (never clustered)
+        priority: list[tuple[StationRecord, int, int]] = []
+        rest: list[tuple[StationRecord, int, int]] = []
+        for item in positioned:
+            stn = item[0]
+            if stn.callsign.upper() == own_callsign.upper():
+                priority.append(item)
+            elif (
+                selected_callsign
+                and stn.callsign.upper() == selected_callsign.upper()
+            ):
+                priority.append(item)
+            else:
+                rest.append(item)
+
+        # Group remaining by grid cells
         cell_groups: dict[tuple[int, int], list[tuple[StationRecord, int, int]]] = (
             defaultdict(list)
         )
-        for station, dot_x, dot_y in positioned:
+        for station, dot_x, dot_y in rest:
             char_col = dot_x // 2
             char_row = dot_y // 4
-            cell_groups[(char_col, char_row)].append((station, dot_x, dot_y))
+            grid_key = (char_col // radius, char_row // radius)
+            cell_groups[grid_key].append((station, dot_x, dot_y))
 
         # Separate clusters from individual stations.
-        individual: list[tuple[StationRecord, int, int]] = []
+        individual: list[tuple[StationRecord, int, int]] = list(priority)
         clusters: list[tuple[int, int, int]] = []  # (char_col, char_row, count)
 
-        for (char_col, char_row), group in cell_groups.items():
+        for grid_key, group in cell_groups.items():
             if len(group) >= CLUSTER_THRESHOLD:
-                clusters.append((char_col, char_row, len(group)))
+                # Use the average position for cluster placement
+                avg_col = sum(item[1] // 2 for item in group) // len(group)
+                avg_row = sum(item[2] // 4 for item in group) // len(group)
+                clusters.append((avg_col, avg_row, len(group)))
             else:
                 individual.extend(group)
 
@@ -241,6 +293,17 @@ class StationOverlay:
                 if placed:
                     for i in range(label_len):
                         canvas.set_cell_style(lbl_col + i, lbl_row, style)  # noqa: F821
+
+            # Chat indicator
+            chats = chat_callsigns or set()
+            if station.callsign.upper() in chats:
+                # Draw 'C' one cell to the right of the symbol
+                chat_col = char_col + 1
+                if not occupancy.is_occupied(chat_col, char_row):
+                    canvas.draw_text(chat_col * 2, dot_y, "C")
+                    occupancy.mark(chat_col, char_row)
+                    if hasattr(canvas, "set_cell_style"):
+                        canvas.set_cell_style(chat_col, char_row, _STYLE_CHAT)
 
     # ------------------------------------------------------------------
     # Internals
