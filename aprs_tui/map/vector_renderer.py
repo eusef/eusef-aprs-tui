@@ -21,8 +21,8 @@ ZOOM_LAYERS: dict[str, int] = {
     # OpenMapTiles
     "water": 0,
     "waterway": 0,
-    "landcover": 8,
-    "landuse": 8,
+    "landcover": 15,
+    "landuse": 14,
     "transportation": 4,
     "building": 14,
     "boundary": 0,
@@ -369,18 +369,9 @@ class VectorRenderer:
             return
 
         if style_name in self._WATER_STYLES:
-            # Water: set background style only — no dot fill.
-            # This gives a clean colored background without dense braille.
-            xs = [p[0] for p in pixels]
-            ys = [p[1] for p in pixels]
-            canvas.set_region_style(
-                min(xs), min(ys), max(xs), max(ys), style_name
-            )
+            # Water: polygon-accurate background style — no dot fill.
+            canvas.fill_polygon_style(pixels, style_name)
         else:
-            # Land features: fill with dots + apply style
+            # Land features: fill with dots + polygon-accurate style
             canvas.fill_polygon(pixels)
-            xs = [p[0] for p in pixels]
-            ys = [p[1] for p in pixels]
-            canvas.set_region_style(
-                min(xs), min(ys), max(xs), max(ys), style_name
-            )
+            canvas.fill_polygon_style(pixels, style_name)

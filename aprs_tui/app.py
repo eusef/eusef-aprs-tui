@@ -38,6 +38,7 @@ from aprs_tui.protocol.types import APRSPacket
 from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_tcp import KissTcpTransport
 from aprs_tui.map.panel import MapPanel
+from aprs_tui.ui.key_reference import KeyReferencePanel
 from aprs_tui.ui.message_panel import MessagePanel
 from aprs_tui.ui.station_panel import StationPanel
 from aprs_tui.ui.footer import AppFooter
@@ -219,7 +220,9 @@ class APRSTuiApp(App):
                 },
                 id="map-panel",
             )
-        yield MessagePanel(callsign=self.callsign, id="message-panel")
+        with Horizontal(id="message-area"):
+            yield MessagePanel(callsign=self.callsign, id="message-panel")
+            yield KeyReferencePanel(id="key-reference")
         yield AppFooter(id="app-footer")
 
     def on_mount(self) -> None:
@@ -658,8 +661,8 @@ class APRSTuiApp(App):
             "q=Quit  ?=Help  ^W=Config  b=Beacon  c=Compose  r=Raw  "
             "i=APRS-IS  y=Copy  x=Cancel  j/k=Scroll  Tab=Next\n"
             "m=Map(large)  M=Map(small)  "
-            "Map: +/-=Zoom  hjkl=Pan  a=AutoZoom  0=Reset  "
-            "n/N=Station  t=Tracks",
+            "Map: +/-=Zoom  \u2190\u2191\u2192\u2193=Pan  a=AutoZoom  0=Reset  "
+            "n/N=Station  g=Legend  t=Tracks",
             timeout=15,
         )
 

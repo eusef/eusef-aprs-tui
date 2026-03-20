@@ -52,11 +52,22 @@ Screen {
     border: double #58a6ff;
 }
 
-#message-panel {
+#message-area {
     height: 10;
+    layout: horizontal;
+}
+
+#message-panel {
+    width: 2fr;
+    height: 100%;
     border: solid #30363d;
     border-title-color: #8b949e;
     padding: 0;
+}
+
+#key-reference {
+    width: 1fr;
+    height: 100%;
 }
 
 #message-panel:focus-within {
@@ -139,8 +150,11 @@ Screen.-medium #stream-panel {
 Screen.-medium #station-panel {
     width: 2fr;
 }
-Screen.-medium #message-panel {
+Screen.-medium #message-area {
     height: 8;
+}
+Screen.-medium #key-reference {
+    display: none;
 }
 
 /* Narrow width (< 80 cols) */
@@ -155,20 +169,29 @@ Screen.-narrow #station-panel {
     width: 1fr;
     height: 1fr;
 }
-Screen.-narrow #message-panel {
+Screen.-narrow #message-area {
     height: 6;
+}
+Screen.-narrow #key-reference {
+    display: none;
 }
 
 /* ── Responsive layout: height breakpoints ── */
 
 /* Short terminal (24-39 rows) */
-Screen.-short #message-panel {
+Screen.-short #message-area {
     height: 6;
+}
+Screen.-short #key-reference {
+    display: none;
 }
 
 /* Very short terminal (< 24 rows) */
-Screen.-very-short #message-panel {
+Screen.-very-short #message-area {
     height: 2;
+}
+Screen.-very-short #key-reference {
+    display: none;
 }
 Screen.-very-short #msg-inbox {
     display: none;

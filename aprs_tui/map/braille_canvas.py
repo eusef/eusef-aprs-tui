@@ -184,6 +184,51 @@ class BrailleCanvas:
                 for x in range(x_start, x_end + 1):
                     self.set_dot(x, y)
 
+    def fill_polygon_style(
+        self, points: list[tuple[int, int]], feature_type: str
+    ) -> None:
+        """Fill a polygon's interior with a background style (no dots).
+
+        Uses the same scanline algorithm as :meth:`fill_polygon` but writes
+        to the color buffer instead of setting braille dots.  This produces
+        clean colored backgrounds for features like water.
+        """
+        if len(points) < 3:
+            return
+
+        ys = [p[1] for p in points]
+        min_y = max(min(ys), 0)
+        max_y = min(max(ys), self.height - 1)
+        n = len(points)
+
+        for y in range(min_y, max_y + 1):
+            intersections: list[float] = []
+            for i in range(n):
+                x0, y0 = points[i]
+                x1, y1 = points[(i + 1) % n]
+                if y0 == y1:
+                    continue
+                if y0 > y1:
+                    x0, y0, x1, y1 = x1, y1, x0, y0
+                if y0 <= y < y1:
+                    t = (y - y0) / (y1 - y0)
+                    ix = x0 + t * (x1 - x0)
+                    intersections.append(ix)
+
+            intersections.sort()
+
+            char_row = y // 4
+            for j in range(0, len(intersections) - 1, 2):
+                x_start = int(intersections[j] + 0.5)
+                x_end = int(intersections[j + 1] + 0.5)
+                x_start = max(x_start, 0)
+                x_end = min(x_end, self.width - 1)
+                col_start = x_start // 2
+                col_end = x_end // 2
+                for c in range(col_start, min(col_end + 1, self._char_width)):
+                    if 0 <= c < self._char_width and 0 <= char_row < self._char_height:
+                        self._color_buffer[char_row * self._char_width + c] = feature_type
+
     def draw_text(self, x: int, y: int, text: str) -> None:
         """Render ASCII text at a braille-coordinate position.
 

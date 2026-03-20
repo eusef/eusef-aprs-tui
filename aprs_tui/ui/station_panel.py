@@ -7,7 +7,9 @@ import time
 from textual.message import Message
 from textual.widgets import DataTable
 
-from aprs_tui.core.station_tracker import StationRecord
+from rich.text import Text as RichText
+
+from aprs_tui.core.station_tracker import StationRecord, is_rf_station, is_is_only_station
 
 SORT_KEYS = ["last_heard", "callsign", "distance"]
 
@@ -90,6 +92,7 @@ class StationPanel(DataTable):
         self.add_columns("Callsign", "Sym", "Last Heard", "Dist", "Brg", "Pkts")
         self.cursor_type = "row"
         self.show_cursor = False  # No selection by default
+        self._update_column_headers()
 
     def refresh_stations(self, stations: list[StationRecord],
                          chat_callsigns: set[str] | None = None) -> None:
@@ -112,12 +115,18 @@ class StationPanel(DataTable):
             sym = SYMBOL_MAP.get(sym_key, DEFAULT_SYMBOL)
             dist = f"{stn.distance_km:.1f}km" if stn.distance_km is not None else ""
             brg = f"{stn.bearing:.0f}\u00b0" if stn.bearing is not None else ""
-            # Chat indicator
-            call_display = stn.callsign
+            # Chat indicator + RF/IS color
+            call_text = RichText()
             if stn.callsign.upper() in chats:
-                call_display = f"💬 {stn.callsign}"
+                call_text.append("\U0001f4ac ", style="")
+            if is_rf_station(stn):
+                call_text.append(stn.callsign, style="bold #56d364")
+            elif is_is_only_station(stn):
+                call_text.append(stn.callsign, style="dim #6e7681")
+            else:
+                call_text.append(stn.callsign)
             self.add_row(
-                call_display, sym, _format_age(age), dist, brg, str(stn.packet_count)
+                call_text, sym, _format_age(age), dist, brg, str(stn.packet_count)
             )
             self._callsigns.append(stn.callsign)
         self.border_title = f"Stations ({len(stations)})"
@@ -175,7 +184,7 @@ class StationPanel(DataTable):
         """Handle column header click to change sort column/direction."""
         column_label = event.label.plain if hasattr(event.label, 'plain') else str(event.label)
         # Strip existing sort indicators
-        column_label = column_label.replace(" \u25b2", "").replace(" \u25bc", "").strip()
+        column_label = column_label.replace(" \u25b2", "").replace(" \u25bc", "").replace(" \u21d5", "").strip()
         if column_label not in SORT_COLUMNS:
             return  # "Sym" column, not sortable
         if column_label == self._sort_column:
@@ -191,10 +200,12 @@ class StationPanel(DataTable):
         """Update column headers to show sort indicator on active column."""
         for col in self.columns.values():
             label = col.label.plain if hasattr(col.label, 'plain') else str(col.label)
-            label = label.replace(" \u25b2", "").replace(" \u25bc", "").strip()
+            label = label.replace(" \u25b2", "").replace(" \u25bc", "").replace(" \u21d5", "").strip()
             if label == self._sort_column:
                 indicator = " \u25bc" if self._sort_reverse else " \u25b2"
                 col.label = label + indicator
+            elif label in SORT_COLUMNS:
+                col.label = label + " \u21d5"
             else:
                 col.label = label
 

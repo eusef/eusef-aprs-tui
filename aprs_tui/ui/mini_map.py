@@ -42,7 +42,7 @@ class MiniMapWidget(Static):
         self._distance = haversine(own_lat, own_lon, peer_lat, peer_lon)
 
     def on_mount(self) -> None:
-        self.border_title = f" {self._distance:.1f} km "
+        self.border_title = f" Map \u2014 {self._distance:.1f} km "
         self._render_map()
 
     def _render_map(self) -> None:

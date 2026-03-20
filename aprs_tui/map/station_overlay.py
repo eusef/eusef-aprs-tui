@@ -32,15 +32,15 @@ DEFAULT_SYMBOL = "*"
 # Legend entries — symbol character → human-readable description.
 # Exported for use by the map panel legend overlay.
 LEGEND_ENTRIES: list[tuple[str, str]] = [
-    (">", "Car/Mobile"),
-    ("H", "House/QTH"),
-    ("#", "Digipeater"),
-    ("&", "Gateway"),
-    ("W", "Weather"),
-    ("P", "Pedestrian"),
-    ("b", "Bicycle"),
-    ("k", "Truck"),
-    ("*", "Other"),
+    ("(>)", "Car/Mobile"),
+    ("(H)", "House/QTH"),
+    ("(#)", "Digipeater"),
+    ("(&)", "Gateway"),
+    ("(W)", "Weather"),
+    ("(P)", "Pedestrian"),
+    ("(b)", "Bicycle"),
+    ("(k)", "Truck"),
+    ("(*)", "Other"),
     ("(N)", "Cluster"),
 ]
 
@@ -264,21 +264,24 @@ class StationOverlay:
         )
 
         # --- Phase 5: render individual stations with collision avoidance ---
+        icon_width = 3  # "(>)" is 3 chars wide
         for station, dot_x, dot_y in individual:
             char_col = dot_x // 2
             char_row = dot_y // 4
 
-            # Draw station symbol marker.
+            # Draw station symbol marker with parentheses.
             symbol = _symbol_char(station)
-            canvas.draw_text(dot_x, dot_y, symbol)
-            occupancy.mark(char_col, char_row)
+            icon_text = f"({symbol})"
+            canvas.draw_text(dot_x, dot_y, icon_text)
+            for i in range(icon_width):
+                occupancy.mark(char_col + i, char_row)
 
             # Try to place callsign label in 4 candidate positions.
             label = station.callsign
             label_len = len(label)
             placed = False
             for lbl_col, lbl_row in _label_candidates(
-                char_col, char_row, label_len
+                char_col, char_row, label_len, icon_width=icon_width
             ):
                 if occupancy.can_place_label(lbl_col, lbl_row, label_len):
                     canvas.draw_text(lbl_col * 2, lbl_row * 4, label)
@@ -286,10 +289,11 @@ class StationOverlay:
                     placed = True
                     break
 
-            # Apply style.
+            # Apply style to all icon cells.
             style = _choose_style(station, own_callsign, selected_callsign)
             if hasattr(canvas, "set_cell_style"):
-                canvas.set_cell_style(char_col, char_row, style)
+                for i in range(icon_width):
+                    canvas.set_cell_style(char_col + i, char_row, style)
                 if placed:
                     for i in range(label_len):
                         canvas.set_cell_style(lbl_col + i, lbl_row, style)  # noqa: F821
@@ -297,8 +301,8 @@ class StationOverlay:
             # Chat indicator
             chats = chat_callsigns or set()
             if station.callsign.upper() in chats:
-                # Draw 'C' one cell to the right of the symbol
-                chat_col = char_col + 1
+                # Draw 'C' one cell to the right of the icon
+                chat_col = char_col + icon_width
                 if not occupancy.is_occupied(chat_col, char_row):
                     canvas.draw_text(chat_col * 2, dot_y, "C")
                     occupancy.mark(chat_col, char_row)
@@ -340,17 +344,18 @@ def _label_candidates(
     char_col: int,
     char_row: int,
     label_len: int,
+    icon_width: int = 1,
 ) -> list[tuple[int, int]]:
     """Return candidate (start_col, row) positions for a callsign label.
 
     Positions tried in order:
-    1. Right of marker
+    1. Right of marker (offset by icon_width)
     2. Above marker
     3. Left of marker
     4. Below marker
     """
     return [
-        (char_col + 1, char_row),  # right
+        (char_col + icon_width, char_row),  # right
         (char_col, char_row - 1),  # above (label starts at same col)
         (char_col - label_len, char_row),  # left
         (char_col, char_row + 1),  # below (label starts at same col)

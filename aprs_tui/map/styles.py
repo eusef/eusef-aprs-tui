@@ -12,7 +12,7 @@ FEATURE_STYLES: dict[str, Style] = {
     "highway": Style(color="bright_yellow"),
     "road": Style(color="white"),
     "road_minor": Style(color="#8b949e"),
-    "landuse": Style(color="#2ea043"),
+    "landuse": Style(color="#1a3a1a", dim=True),
     "building": Style(color="#6e7681"),
     "label": Style(color="bright_white", bold=True),
     "station_rf": Style(color="bright_green", bold=True),

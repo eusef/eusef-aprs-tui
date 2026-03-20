@@ -113,6 +113,7 @@ class ChatScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="chat-outer"):
             with Horizontal(id="chat-body"):
+                yield RichLog(id="chat-log", wrap=True, markup=False)
                 # Mini map (only if both positions available)
                 if (self._own_lat is not None and self._own_lon is not None
                         and self._peer_lat is not None and self._peer_lon is not None):
@@ -123,7 +124,6 @@ class ChatScreen(ModalScreen[None]):
                         peer_callsign=self.peer_callsign,
                         id="chat-minimap",
                     )
-                yield RichLog(id="chat-log", wrap=True, markup=False)
             yield Input(
                 placeholder=f"Message to {self.peer_callsign}... (Enter to send)",
                 id="chat-input",
@@ -167,8 +167,11 @@ class ChatScreen(ModalScreen[None]):
             if msg.msg_id == msg_id:
                 msg.state = new_state
                 break
-        with contextlib.suppress(Exception):
+        try:
             self._rerender()
+            self.refresh()
+        except Exception:
+            pass  # Screen not yet mounted
 
     def _render_message(self, msg: ChatMessage) -> None:
         """Render a single chat message."""

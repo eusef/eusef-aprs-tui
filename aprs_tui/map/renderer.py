@@ -57,7 +57,7 @@ class MapRenderer:
 
         # 2. Render station overlay
         if stations:
-            overlay = StationOverlay(canvas, zoom, center_lat, center_lon)
+            overlay = StationOverlay(canvas, int_zoom, center_lat, center_lon)
             overlay.render_stations(
                 stations, own_callsign, selected_callsign, chat_callsigns
             )

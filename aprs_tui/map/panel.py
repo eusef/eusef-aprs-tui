@@ -118,12 +118,16 @@ class MapPanel(Widget, can_focus=True):
         # Track renderer
         self._track_renderer = TrackRenderer()
 
+        # Tile zoom bounds (from registry, clamped during zoom actions)
+        self._tile_min_zoom: int = 0
+        self._tile_max_zoom: int = 18
+
         # Try to load tile source from registry
         self._registry: MapRegistry | None = None
         self._try_load_tiles()
 
         # Legend overlay state
-        self._show_legend: bool = False
+        self._show_legend: bool = True
 
         # Chat callsigns for map indicator
         self._chat_callsigns: set[str] = set()
@@ -142,6 +146,8 @@ class MapPanel(Widget, can_focus=True):
                 path = self._registry.get_mbtiles_path(entry)
                 if path.exists():
                     self._renderer.set_tile_source(MBTilesSource(str(path)))
+                    self._tile_min_zoom = entry.min_zoom
+                    self._tile_max_zoom = entry.max_zoom
         except Exception:
             pass  # No maps available -- graceful degradation
 
@@ -235,7 +241,7 @@ class MapPanel(Widget, can_focus=True):
         hints = Text()
         keys = [
             ("+/-", "Zoom"),
-            ("hjkl", "Pan"),
+            ("\u2190\u2191\u2192\u2193", "Pan"),
             ("a", "Auto"),
             ("0", "Reset"),
             ("n/N", "Stn"),
@@ -245,7 +251,7 @@ class MapPanel(Widget, can_focus=True):
             ("d", "Digi"),
             ("t", "Trk"),
             ("f", "Full"),
-            ("?", "Key"),
+            ("g", "Legend"),
             ("m", "Close"),
         ]
         for i, (key, label) in enumerate(keys):
@@ -293,6 +299,10 @@ class MapPanel(Widget, can_focus=True):
             padded_desc = desc.ljust(desc_width)
             row = "\u2502 " + padded_sym + " " + padded_desc + " \u2502"
             box_rows.append(row)
+        # Add hide hint row
+        hide_hint = "g:hide"
+        padded_hint = hide_hint.center(inner_width)
+        box_rows.append("\u2502 " + padded_hint + " \u2502")
         box_rows.append(bottom_border)
 
         box_height = len(box_rows)
@@ -369,12 +379,12 @@ class MapPanel(Widget, can_focus=True):
 
     def action_zoom_in(self) -> None:
         self._disable_auto_zoom()
-        self.zoom = min(18.0, self.zoom + 1.0)
+        self.zoom = min(float(self._tile_max_zoom), self.zoom + 1.0)
         self.refresh()
 
     def action_zoom_out(self) -> None:
         self._disable_auto_zoom()
-        self.zoom = max(0.0, self.zoom - 1.0)
+        self.zoom = max(float(self._tile_min_zoom), self.zoom - 1.0)
         self.refresh()
 
     def action_toggle_auto_zoom(self) -> None:
@@ -437,25 +447,25 @@ class MapPanel(Widget, can_focus=True):
             return
 
         # Legend toggle
-        if char == "?":
+        if char == "g":
             self._show_legend = not self._show_legend
             self.refresh()
             event.prevent_default()
             return
 
-        # Standard pan (25%)
+        # Standard pan (25%) — arrow keys only
         pan_keys = {
-            "h": (-0.25, 0), "left": (-0.25, 0),
-            "l": (0.25, 0), "right": (0.25, 0),
-            "k": (0, -0.25), "up": (0, -0.25),
-            "j": (0, 0.25), "down": (0, 0.25),
+            "left": (-0.25, 0),
+            "right": (0.25, 0),
+            "up": (0, -0.25),
+            "down": (0, 0.25),
         }
         # Fast pan (50%)
         fast_keys = {
-            "H": (-0.5, 0), "shift+left": (-0.5, 0),
-            "L": (0.5, 0), "shift+right": (0.5, 0),
-            "K": (0, -0.5), "shift+up": (0, -0.5),
-            "J": (0, 0.5), "shift+down": (0, 0.5),
+            "shift+left": (-0.5, 0),
+            "shift+right": (0.5, 0),
+            "shift+up": (0, -0.5),
+            "shift+down": (0, 0.5),
         }
 
         if key in pan_keys:
