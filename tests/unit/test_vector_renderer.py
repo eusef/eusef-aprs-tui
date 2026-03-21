@@ -2,17 +2,15 @@
 from __future__ import annotations
 
 import mapbox_vector_tile
-import pytest
 
 from aprs_tui.map.braille_canvas import BrailleCanvas
 from aprs_tui.map.vector_renderer import (
-    ZOOM_LAYERS,
-    VectorRenderer,
     _CITY_CLASSES,
     _LABEL_LAYERS,
+    ZOOM_LAYERS,
+    VectorRenderer,
     _max_label_len,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers — build synthetic MVT tile data
@@ -53,7 +51,13 @@ def _flip_geom_y(geom: dict, extent: int) -> dict:
     elif gtype == "Polygon":
         return {"type": gtype, "coordinates": [[flip_pt(p) for p in ring] for ring in coords]}
     elif gtype == "MultiPolygon":
-        return {"type": gtype, "coordinates": [[[flip_pt(p) for p in ring] for ring in poly] for poly in coords]}
+        return {
+            "type": gtype,
+            "coordinates": [
+                [[flip_pt(p) for p in ring] for ring in poly]
+                for poly in coords
+            ],
+        }
     return geom
 
 
@@ -454,7 +458,9 @@ class TestLabelRendering:
             center_lat=-0.1758, center_lon=0.1758,
         )
 
-        styled_cells = [c for c in canvas._color_buffer if c == "label_city"]
+        styled_cells = [
+            v for v in canvas._text_style_overlay.values() if v == "label_city"
+        ]
         assert len(styled_cells) > 0, "Expected 'label_city' style on city label cells"
 
     def test_village_label_uses_default_layer_style(self) -> None:
@@ -517,7 +523,9 @@ class TestLabelRendering:
             center_lat=-0.1758, center_lon=0.1758,
         )
 
-        styled_cells = [c for c in canvas._color_buffer if c == "label_street"]
+        styled_cells = [
+            v for v in canvas._text_style_overlay.values() if v == "label_street"
+        ]
         assert len(styled_cells) > 0, "Expected 'label_street' style on street labels"
 
 

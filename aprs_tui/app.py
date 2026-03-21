@@ -34,16 +34,16 @@ from aprs_tui.core.connection import ConnectionManager
 from aprs_tui.core.message_tracker import InboundMessage, MessageTracker, TrackedMessage
 from aprs_tui.core.packet_bus import PacketBus
 from aprs_tui.core.station_tracker import StationTracker
+from aprs_tui.map.panel import MapPanel
 from aprs_tui.protocol.types import APRSPacket
 from aprs_tui.transport.base import ConnectionState
 from aprs_tui.transport.kiss_tcp import KissTcpTransport
-from aprs_tui.map.panel import MapPanel
+from aprs_tui.ui.footer import AppFooter
 from aprs_tui.ui.key_reference import KeyReferencePanel
 from aprs_tui.ui.message_panel import MessagePanel
-from aprs_tui.ui.station_panel import StationPanel
-from aprs_tui.ui.footer import AppFooter
-from aprs_tui.ui.status_bar import StatusBar
 from aprs_tui.ui.station_info_screen import StationInfoScreen
+from aprs_tui.ui.station_panel import StationPanel
+from aprs_tui.ui.status_bar import StatusBar
 from aprs_tui.ui.stream_panel import StreamPanel
 
 if TYPE_CHECKING:
@@ -818,14 +818,20 @@ class APRSTuiApp(App):
                 await self._aprs_is_manager.send_frame(packet_line.encode("latin-1"))
             elif self.config.server.protocol == "aprs-is":
                 # Primary transport is APRS-IS — send as text packet
-                if not self._connection_manager or self._connection_manager.state.value != "connected":
+                if (
+                    not self._connection_manager
+                    or self._connection_manager.state.value != "connected"
+                ):
                     raise ConnectionError("Not connected")
                 from aprs_tui.protocol.encoder import build_packet
                 packet_line = build_packet(self.callsign, "APRS", info, ["TCPIP*"])
                 await self._connection_manager.send_frame(packet_line.encode("latin-1"))
             else:
                 # Primary transport is RF (KISS) — send as AX.25 frame
-                if not self._connection_manager or self._connection_manager.state.value != "connected":
+                if (
+                    not self._connection_manager
+                    or self._connection_manager.state.value != "connected"
+                ):
                     raise ConnectionError("Not connected")
                 from aprs_tui.protocol.ax25 import ax25_encode
                 ax25_data = ax25_encode(
@@ -863,15 +869,11 @@ class APRSTuiApp(App):
 
     def on_map_panel_station_selected(self, event: MapPanel.StationSelected) -> None:
         """Highlight station in station list and stream when selected on map."""
-        try:
+        with contextlib.suppress(Exception):
             station_panel = self.query_one(StationPanel)
             station_panel.select_callsign(event.callsign)
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             self.query_one(StreamPanel).set_highlight_station(event.callsign)
-        except Exception:
-            pass
 
     def on_map_panel_station_activated(self, event: MapPanel.StationActivated) -> None:
         """Open station info screen when Enter is pressed on a map station."""
@@ -1267,10 +1269,8 @@ class APRSTuiApp(App):
         # Persist position preference
         self.config.map.position = position
         config_path = self._config_path or default_config_path()
-        try:
+        with contextlib.suppress(Exception):
             self.config.save(config_path)
-        except Exception:
-            pass
 
     def _hide_map(self) -> None:
         """Hide the map and restore what it replaced."""

@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from aprs_tui.map.registry import MapEntry, MapRegistry
 
 

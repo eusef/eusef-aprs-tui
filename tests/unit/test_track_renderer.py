@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
 from aprs_tui.core.station_tracker import StationRecord
 from aprs_tui.map.braille_canvas import BrailleCanvas

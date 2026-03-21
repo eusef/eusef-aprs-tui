@@ -5,14 +5,12 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # wizard.py lives at the project root, not inside a package
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from aprs_tui.config import AppConfig, MapConfig, StationConfig
+from aprs_tui.config import AppConfig, StationConfig  # noqa: E402
 
 
 class TestStepMapSetupCanBeImported:

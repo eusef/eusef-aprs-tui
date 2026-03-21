@@ -1,12 +1,13 @@
 """Tests for aprs_tui.map.panel — MapPanel Textual widget."""
 from __future__ import annotations
 
+import contextlib
+
 from rich.text import Text
 
 from aprs_tui.core.station_tracker import StationRecord
 from aprs_tui.map.filters import MapFilters
 from aprs_tui.map.panel import MapPanel
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,9 +43,9 @@ def _make_panel(**kwargs) -> MapPanel:  # type: ignore[no-untyped-def]
     panel._reactive_auto_zoom_enabled = kwargs.get("auto_zoom_enabled", True)
 
     # Non-reactive instance attributes
-    panel._station_tracker = kwargs.get("station_tracker", None)
+    panel._station_tracker = kwargs.get("station_tracker")
     panel._own_callsign = kwargs.get("own_callsign", "")
-    panel._selected_callsign = kwargs.get("selected_callsign", None)
+    panel._selected_callsign = kwargs.get("selected_callsign")
     panel._auto_zoom_min = cfg.get("auto_zoom_min", 4)
     panel._auto_zoom_max = cfg.get("auto_zoom_max", 14)
     panel._default_zoom = default_zoom
@@ -238,8 +239,6 @@ class TestNotifyStationUpdate:
         panel = _make_panel()
         # refresh() will fail since there's no app context, but we verify
         # the method exists and the panel attribute is wired correctly.
-        try:
+        with contextlib.suppress(Exception):
+            # Textual may raise since there's no running app
             panel.notify_station_update()
-        except Exception:
-            # Expected: Textual may raise since there's no running app
-            pass

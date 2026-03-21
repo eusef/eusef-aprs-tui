@@ -11,7 +11,6 @@ from aprs_tui.core.station_tracker import StationRecord
 from aprs_tui.map.renderer import MapRenderer
 from aprs_tui.map.tile_source import MBTilesSource
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -1,7 +1,6 @@
 """Tests for aprs_tui.map.braille_canvas — BrailleCanvas core class."""
 from __future__ import annotations
 
-from rich.style import Style
 from rich.text import Text
 
 from aprs_tui.map.braille_canvas import BrailleCanvas
@@ -461,14 +460,14 @@ class TestRenderAscii:
         ascii_lines = c.render_ascii()
         braille_lines = c.render()
         assert len(ascii_lines) == len(braille_lines)
-        for a, b in zip(ascii_lines, braille_lines):
+        for a, b in zip(ascii_lines, braille_lines, strict=True):
             assert len(a) == len(b)
 
 
 class TestStyles:
     def test_get_style_returns_correct_for_known_types(self):
         """get_style should return a non-default style for each known feature type."""
-        default = get_style("default")
+        get_style("default")
         for name in ("water", "coastline", "highway", "road", "station_rf",
                       "station_is", "station_own", "station_emergency", "track"):
             style = get_style(name)

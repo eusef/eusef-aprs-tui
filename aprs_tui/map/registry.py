@@ -106,9 +106,8 @@ class MapRegistry:
         candidates = []
         for entry in self._entries.values():
             w, s, e, n = entry.bounds
-            if w <= center_lon <= e and s <= center_lat <= n:
-                if entry.max_zoom >= int(zoom):
-                    candidates.append(entry)
+            if w <= center_lon <= e and s <= center_lat <= n and entry.max_zoom >= int(zoom):
+                candidates.append(entry)
         if not candidates:
             # Fall back: any map containing the point
             for entry in self._entries.values():

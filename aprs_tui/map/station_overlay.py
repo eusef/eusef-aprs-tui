@@ -129,10 +129,10 @@ class _OccupancyGrid:
 
     def can_place_label(self, start_col: int, row: int, length: int) -> bool:
         """Check if *length* consecutive cells starting at (start_col, row) are free."""
-        for c in range(start_col, start_col + length):
-            if self.is_occupied(c, row):
-                return False
-        return True
+        return all(
+            not self.is_occupied(c, row)
+            for c in range(start_col, start_col + length)
+        )
 
     def mark_label(self, start_col: int, row: int, length: int) -> None:
         """Mark *length* consecutive cells starting at (start_col, row) as occupied."""
@@ -211,9 +211,7 @@ class StationOverlay:
         rest: list[tuple[StationRecord, int, int]] = []
         for item in positioned:
             stn = item[0]
-            if stn.callsign.upper() == own_callsign.upper():
-                priority.append(item)
-            elif (
+            if stn.callsign.upper() == own_callsign.upper() or (
                 selected_callsign
                 and stn.callsign.upper() == selected_callsign.upper()
             ):
@@ -235,7 +233,7 @@ class StationOverlay:
         individual: list[tuple[StationRecord, int, int]] = list(priority)
         clusters: list[tuple[int, int, int]] = []  # (char_col, char_row, count)
 
-        for grid_key, group in cell_groups.items():
+        for _grid_key, group in cell_groups.items():
             if len(group) >= CLUSTER_THRESHOLD:
                 # Use the average position for cluster placement
                 avg_col = sum(item[1] // 2 for item in group) // len(group)

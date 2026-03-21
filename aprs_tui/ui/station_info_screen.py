@@ -11,7 +11,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-from aprs_tui.core.station_tracker import StationRecord, is_is_only_station, is_rf_station
+from aprs_tui.core.station_tracker import StationRecord
 
 
 class StationInfoScreen(ModalScreen[None]):

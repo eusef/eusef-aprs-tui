@@ -10,8 +10,8 @@ from aprs_tui.map.station_overlay import (
     DEFAULT_SYMBOL,
     SYMBOL_MAP,
     StationOverlay,
-    _OccupancyGrid,
     _label_candidates,
+    _OccupancyGrid,
     _symbol_char,
 )
 
@@ -186,7 +186,6 @@ class TestMultipleStations:
         stn2 = _make_station(callsign="BB", lat=CENTER_LAT + 0.005, lon=CENTER_LON)
         overlay.render_stations([stn1, stn2], own_callsign="ME")
         text = _text_chars(canvas)
-        placed = "".join(text.values())
         # Both callsigns (or at least their symbol chars) should appear.
         # They may overlap so we just check total entries > 1 char cell.
         assert len(text) > 2

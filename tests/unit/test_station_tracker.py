@@ -20,8 +20,8 @@ from __future__ import annotations
 from aprs_tui.core.station_tracker import (
     StationTracker,
     haversine,
-    is_rf_station,
     is_is_only_station,
+    is_rf_station,
 )
 from aprs_tui.protocol.types import APRSPacket
 

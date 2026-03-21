@@ -18,7 +18,6 @@ from aprs_tui.config import (
     AppConfig,
     APRSISConfig,
     BeaconConfig,
-    MapConfig,
     ServerConfig,
     StationConfig,
     default_config_path,
@@ -1277,7 +1276,9 @@ def step_map_setup(config: AppConfig) -> AppConfig:
         raise KeyboardInterrupt
 
     if not download_now:
-        console.print("  [dim]You can download maps later with: python -m aprs_tui.map.downloader[/dim]")
+        console.print(
+            "  [dim]You can download maps later with: python -m aprs_tui.map.downloader[/dim]"
+        )
         return config.model_copy(
             update={"map": config.map.model_copy(update={"enabled": True})}
         )
@@ -1440,7 +1441,7 @@ def step_map_setup(config: AppConfig) -> AppConfig:
             min_zoom=0,
             max_zoom=max_zoom,
             size_mb=round(output_path.stat().st_size / (1024 * 1024), 1),
-            downloaded=datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
+            downloaded=datetime.datetime.now(tz=datetime.UTC).isoformat(),
         ),
     )
     console.print("  [green]\u2713[/green] Map registered in maps.toml")

@@ -4,12 +4,11 @@ from __future__ import annotations
 import contextlib
 import time
 
+from rich.text import Text as RichText
 from textual.message import Message
 from textual.widgets import DataTable
 
-from rich.text import Text as RichText
-
-from aprs_tui.core.station_tracker import StationRecord, is_rf_station, is_is_only_station
+from aprs_tui.core.station_tracker import StationRecord, is_is_only_station, is_rf_station
 
 SORT_KEYS = ["last_heard", "callsign", "distance"]
 
@@ -184,7 +183,9 @@ class StationPanel(DataTable):
         """Handle column header click to change sort column/direction."""
         column_label = event.label.plain if hasattr(event.label, 'plain') else str(event.label)
         # Strip existing sort indicators
-        column_label = column_label.replace(" \u25b2", "").replace(" \u25bc", "").replace(" \u21d5", "").strip()
+        column_label = column_label.replace(
+            " \u25b2", "",
+        ).replace(" \u25bc", "").replace(" \u21d5", "").strip()
         if column_label not in SORT_COLUMNS:
             return  # "Sym" column, not sortable
         if column_label == self._sort_column:
@@ -200,7 +201,9 @@ class StationPanel(DataTable):
         """Update column headers to show sort indicator on active column."""
         for col in self.columns.values():
             label = col.label.plain if hasattr(col.label, 'plain') else str(col.label)
-            label = label.replace(" \u25b2", "").replace(" \u25bc", "").replace(" \u21d5", "").strip()
+            label = label.replace(
+                " \u25b2", "",
+            ).replace(" \u25bc", "").replace(" \u21d5", "").strip()
             if label == self._sort_column:
                 indicator = " \u25bc" if self._sort_reverse else " \u25b2"
                 col.label = label + indicator

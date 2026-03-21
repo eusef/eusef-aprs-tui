@@ -10,9 +10,9 @@ import gzip
 import math
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import mercantile
 
@@ -168,11 +168,14 @@ class TileDownloader:
             )
 
         import asyncio
+
         import httpx
 
         transport = self._transport
 
-        async def _fetch_batch(batch: list[tuple[int, int, int]]) -> list[tuple[int, int, int, bytes]]:
+        async def _fetch_batch(
+            batch: list[tuple[int, int, int]],
+        ) -> list[tuple[int, int, int, bytes]]:
             """Fetch a batch of tiles concurrently."""
             results: list[tuple[int, int, int, bytes]] = []
             client_kwargs: dict = {

@@ -59,18 +59,16 @@ class MapFilters:
             return False
 
         # Type filter: weather stations
-        if not self.show_wx_stations:
-            if stn.symbol_table and stn.symbol_code:
-                sym = stn.symbol_table + stn.symbol_code
-                if sym == "/_":  # Weather station symbol
-                    return False
+        if not self.show_wx_stations and stn.symbol_table and stn.symbol_code:
+            sym = stn.symbol_table + stn.symbol_code
+            if sym == "/_":  # Weather station symbol
+                return False
 
         # Type filter: digipeaters/igates
-        if not self.show_digi_stations:
-            if stn.symbol_table and stn.symbol_code:
-                sym = stn.symbol_table + stn.symbol_code
-                if sym in ("/#", "/&"):  # Digipeater, iGate
-                    return False
+        if not self.show_digi_stations and stn.symbol_table and stn.symbol_code:
+            sym = stn.symbol_table + stn.symbol_code
+            if sym in ("/#", "/&"):  # Digipeater, iGate
+                return False
 
         return True
 

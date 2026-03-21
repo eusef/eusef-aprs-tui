@@ -23,7 +23,8 @@ class MapRenderer:
         self._vector_renderer = VectorRenderer()
         # Cache the last rendered base map to avoid re-rendering when only stations change
         self._cached_base: list[str] | None = None
-        self._cached_viewport: tuple[float, float, float, int, int] | None = None  # (lat, lon, zoom, w, h)
+        # (lat, lon, zoom, w, h)
+        self._cached_viewport: tuple[float, float, float, int, int] | None = None
 
     def set_tile_source(self, source: MBTilesSource | None) -> None:
         """Change the tile source. Invalidates base map cache."""

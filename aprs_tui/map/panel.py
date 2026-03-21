@@ -6,12 +6,12 @@ status line with coordinates, zoom level, and filter indicators.
 """
 from __future__ import annotations
 
+from rich.text import Text
 from textual.binding import Binding
 from textual.events import Key
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from rich.text import Text
 
 from aprs_tui.core.station_tracker import (
     StationRecord,

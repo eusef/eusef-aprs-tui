@@ -4,7 +4,6 @@ from __future__ import annotations
 from aprs_tui.core.station_tracker import StationRecord
 from aprs_tui.map.filters import MapFilters
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

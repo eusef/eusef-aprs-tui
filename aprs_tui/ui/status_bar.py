@@ -5,7 +5,8 @@ TX/RX counters and connection state moved to AppFooter (#74).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import contextlib
+from datetime import UTC, datetime
 
 from rich.text import Text
 from textual.widget import Widget
@@ -71,7 +72,7 @@ class StatusBar(Widget):
     def _update_clock(self) -> None:
         """Refresh the left region with callsign + dual clock."""
         now_local = datetime.now().astimezone()
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
 
         local_time = now_local.strftime("%H:%M")
         local_tz = now_local.strftime("%Z") or "LCL"
@@ -81,19 +82,15 @@ class StatusBar(Widget):
         text.append(f"{self._callsign}", style="bold white")
         text.append(f"  {local_time} {local_tz} / {utc_time} UTC", style="#8b949e")
 
-        try:
+        with contextlib.suppress(Exception):
             self.query_one("#header-left", Static).update(text)
-        except Exception:
-            pass
 
     def _update_kofi(self) -> None:
         """Set the right region with ko-fi link."""
         text = Text()
         text.append("\u2615 ko-fi.com/philj2", style="#e3b341")
-        try:
+        with contextlib.suppress(Exception):
             self.query_one("#header-right", Static).update(text)
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------
     # Backward-compatible API (state moved to AppFooter in #74)

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from aprs_tui.config import AppConfig, MapConfig, default_config_path
+from aprs_tui.config import AppConfig, default_config_path
 
 # ==========================================================================
 # Config loading

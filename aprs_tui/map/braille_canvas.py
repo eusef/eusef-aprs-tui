@@ -18,7 +18,6 @@ from rich.text import Text
 
 from aprs_tui.map.styles import get_style
 
-
 # Pre-computed lookup: (col, row) within a 2×4 cell → bit index.
 _DOT_BIT: list[list[int]] = [
     # col 0        col 1

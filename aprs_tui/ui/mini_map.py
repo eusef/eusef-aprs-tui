@@ -106,7 +106,7 @@ class MiniMapWidget(Static):
         # Build Rich Text output with proper styling
         text = Text()
         for r, row in enumerate(grid):
-            for c, ch in enumerate(row):
+            for _c, ch in enumerate(row):
                 if ch == "\u2605":
                     text.append(ch, style="bold #e3b341")
                 elif ch == "\u25cf":

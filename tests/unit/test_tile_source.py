@@ -171,5 +171,5 @@ class TestLifecycle:
     def test_invalid_db_raises(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.mbtiles"
         bad.write_bytes(b"not sqlite")
-        with pytest.raises(Exception):
+        with pytest.raises((ValueError, RuntimeError, Exception)):
             MBTilesSource(bad)

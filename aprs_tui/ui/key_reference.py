@@ -4,7 +4,6 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Static
 
-
 # Grouped key bindings for the quick reference panel.
 KEY_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("General", [
