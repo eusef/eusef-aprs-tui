@@ -52,6 +52,8 @@ class BrailleCanvas:
         self._color_buffer: list[str | None] = [None] * (char_width * char_height)
         # Text overlay: maps (char_col, char_row) → single character.
         self._text_overlay: dict[tuple[int, int], str] = {}
+        # Protected style for text overlay cells (not overwritten by features).
+        self._text_style_overlay: dict[tuple[int, int], str] = {}
 
     # ------------------------------------------------------------------
     # Properties
@@ -229,7 +231,9 @@ class BrailleCanvas:
                     if 0 <= c < self._char_width and 0 <= char_row < self._char_height:
                         self._color_buffer[char_row * self._char_width + c] = feature_type
 
-    def draw_text(self, x: int, y: int, text: str) -> None:
+    def draw_text(
+        self, x: int, y: int, text: str, style_name: str | None = None,
+    ) -> None:
         """Render ASCII text at a braille-coordinate position.
 
         Each character occupies a 2-wide by 4-tall braille dot cell.
@@ -240,6 +244,8 @@ class BrailleCanvas:
             x: Horizontal position in braille dot coordinates.
             y: Vertical position in braille dot coordinates.
             text: String to render.
+            style_name: Optional feature-type style that will be preserved
+                even if later features overwrite the colour buffer.
         """
         char_col = x // 2
         char_row = y // 4
@@ -247,6 +253,8 @@ class BrailleCanvas:
             col = char_col + i
             if 0 <= col < self._char_width and 0 <= char_row < self._char_height:
                 self._text_overlay[(col, char_row)] = ch
+                if style_name is not None:
+                    self._text_style_overlay[(col, char_row)] = style_name
 
     # ------------------------------------------------------------------
     # Canvas operations
@@ -258,6 +266,7 @@ class BrailleCanvas:
             self._cells[i] = 0
         self._color_buffer = [None] * len(self._cells)
         self._text_overlay.clear()
+        self._text_style_overlay.clear()
 
     # ------------------------------------------------------------------
     # Style management
@@ -315,6 +324,9 @@ class BrailleCanvas:
                 style = get_style(feature) if feature else get_style("default")
                 key = (col, row)
                 if key in self._text_overlay:
+                    text_style_name = self._text_style_overlay.get(key)
+                    if text_style_name:
+                        style = get_style(text_style_name)
                     line.append(self._text_overlay[key], style=style)
                 else:
                     line.append(chr(0x2800 + self._cells[idx]), style=style)

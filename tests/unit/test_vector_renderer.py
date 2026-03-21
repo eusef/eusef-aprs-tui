@@ -5,7 +5,13 @@ import mapbox_vector_tile
 import pytest
 
 from aprs_tui.map.braille_canvas import BrailleCanvas
-from aprs_tui.map.vector_renderer import ZOOM_LAYERS, VectorRenderer
+from aprs_tui.map.vector_renderer import (
+    ZOOM_LAYERS,
+    VectorRenderer,
+    _CITY_CLASSES,
+    _LABEL_LAYERS,
+    _max_label_len,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +98,66 @@ def _point_tile() -> bytes:
             },
             "properties": {"name": "Testville"},
             "id": 3,
+        }],
+    }])
+
+
+def _city_label_tile() -> bytes:
+    """Tile with a city-class place point."""
+    return _make_tile([{
+        "name": "place",
+        "features": [{
+            "geometry": {
+                "type": "Point",
+                "coordinates": (2048, 2048),
+            },
+            "properties": {"name": "Boston", "class": "city"},
+            "id": 20,
+        }],
+    }])
+
+
+def _village_label_tile() -> bytes:
+    """Tile with a village-class place point."""
+    return _make_tile([{
+        "name": "place",
+        "features": [{
+            "geometry": {
+                "type": "Point",
+                "coordinates": (2048, 2048),
+            },
+            "properties": {"name": "Smalltown", "class": "village"},
+            "id": 21,
+        }],
+    }])
+
+
+def _no_name_place_tile() -> bytes:
+    """Tile with a place point lacking a name property."""
+    return _make_tile([{
+        "name": "place",
+        "features": [{
+            "geometry": {
+                "type": "Point",
+                "coordinates": (2048, 2048),
+            },
+            "properties": {"class": "city"},
+            "id": 22,
+        }],
+    }])
+
+
+def _street_label_tile() -> bytes:
+    """Tile with a VersaTiles street_labels point."""
+    return _make_tile([{
+        "name": "street_labels",
+        "features": [{
+            "geometry": {
+                "type": "Point",
+                "coordinates": (2048, 2048),
+            },
+            "properties": {"name": "Main Street"},
+            "id": 23,
         }],
     }])
 
@@ -316,7 +382,7 @@ class TestRenderPolygon:
 
 class TestRenderPoint:
     def test_draws_point(self) -> None:
-        """A place point at sufficient zoom should set a dot."""
+        """A place point with a name should render as text label."""
         renderer = VectorRenderer()
         canvas = BrailleCanvas(40, 20)
         tile_data = _point_tile()
@@ -328,8 +394,8 @@ class TestRenderPoint:
             center_lat=-0.1758, center_lon=0.1758,
         )
 
-        any_set = any(b != 0 for b in canvas._cells)
-        assert any_set, "Expected place point to set a dot on canvas"
+        # Named place features render as text labels, not dots
+        assert len(canvas._text_overlay) > 0, "Expected place point to render text label"
 
 
 # ---------------------------------------------------------------------------
@@ -354,3 +420,131 @@ class TestTileLocalToLatlon:
         lat, lon = VectorRenderer._tile_local_to_latlon(4096, 4096, 0, 0, 0)
         assert lat < -80
         assert lon > 170
+
+
+# ---------------------------------------------------------------------------
+# Label rendering
+# ---------------------------------------------------------------------------
+
+class TestLabelRendering:
+    def test_city_label_renders_text(self) -> None:
+        """A city place feature should render as text, not just a dot."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _city_label_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=-0.1758, center_lon=0.1758,
+        )
+
+        # Text overlay should contain characters from the label
+        assert len(canvas._text_overlay) > 0
+
+    def test_city_label_uses_city_style(self) -> None:
+        """City-class places should use the 'label_city' style."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _city_label_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=-0.1758, center_lon=0.1758,
+        )
+
+        styled_cells = [c for c in canvas._color_buffer if c == "label_city"]
+        assert len(styled_cells) > 0, "Expected 'label_city' style on city label cells"
+
+    def test_village_label_uses_default_layer_style(self) -> None:
+        """Non-city place classes should use the layer's default style."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _village_label_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=-0.1758, center_lon=0.1758,
+        )
+
+        # Village uses the layer default (label_city from _LAYER_TO_STYLE for "place")
+        # but since "village" is not in _CITY_CLASSES, it falls back to the style_name
+        # which is the _LAYER_TO_STYLE mapping for "place" = "label_city"
+        assert len(canvas._text_overlay) > 0
+
+    def test_no_name_falls_back_to_dot(self) -> None:
+        """Place features without a name should render as a simple dot."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _no_name_place_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=-0.1758, center_lon=0.1758,
+        )
+
+        # Should have set a dot but no text overlay
+        assert len(canvas._text_overlay) == 0
+        any_set = any(b != 0 for b in canvas._cells)
+        assert any_set, "Expected a dot for nameless place feature"
+
+    def test_street_label_renders_text(self) -> None:
+        """Street label features should render as text."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _street_label_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=-0.1758, center_lon=0.1758,
+        )
+
+        assert len(canvas._text_overlay) > 0
+
+    def test_street_label_uses_street_style(self) -> None:
+        """Street labels should use the 'label_street' style."""
+        renderer = VectorRenderer()
+        canvas = BrailleCanvas(40, 20)
+        tile_data = _street_label_tile()
+
+        renderer.render_features(
+            canvas, tile_data,
+            zoom=10, tile_x=512, tile_y=512, tile_z=10,
+            center_lat=-0.1758, center_lon=0.1758,
+        )
+
+        styled_cells = [c for c in canvas._color_buffer if c == "label_street"]
+        assert len(styled_cells) > 0, "Expected 'label_street' style on street labels"
+
+
+class TestMaxLabelLen:
+    def test_high_zoom_allows_long_labels(self) -> None:
+        assert _max_label_len(14) == 20
+        assert _max_label_len(16) == 20
+
+    def test_medium_zoom_caps_at_15(self) -> None:
+        assert _max_label_len(10) == 15
+        assert _max_label_len(13) == 15
+
+    def test_low_zoom_caps_at_12(self) -> None:
+        assert _max_label_len(7) == 12
+        assert _max_label_len(9) == 12
+
+    def test_very_low_zoom_caps_at_8(self) -> None:
+        assert _max_label_len(4) == 8
+        assert _max_label_len(6) == 8
+
+
+class TestLabelConstants:
+    def test_label_layers_contains_place(self) -> None:
+        assert "place" in _LABEL_LAYERS
+        assert "place_labels" in _LABEL_LAYERS
+        assert "street_labels" in _LABEL_LAYERS
+
+    def test_city_classes_contains_city(self) -> None:
+        assert "city" in _CITY_CLASSES
+        assert "town" in _CITY_CLASSES

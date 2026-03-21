@@ -52,20 +52,43 @@ _LAYER_TO_STYLE: dict[str, str] = {
     "transportation": "road",
     "building": "building",
     "boundary": "boundary",
-    "place": "label",
+    "place": "label_city",
     # VersaTiles
     "ocean": "water",
     "water_polygons": "water",
     "water_lines": "coastline",
-    "water_lines_labels": "label",
+    "water_lines_labels": "label_street",
     "boundaries": "boundary",
-    "boundary_labels": "label",
+    "boundary_labels": "label_street",
     "streets": "road",
-    "street_labels": "label",
+    "street_labels": "label_street",
     "land": "landuse",
-    "place_labels": "label",
+    "place_labels": "label_city",
     "ferries": "road_minor",
 }
+
+
+# Layers that should produce text labels instead of plain dots.
+_LABEL_LAYERS = frozenset({
+    "place", "place_labels", "street_labels",
+    "water_lines_labels", "boundary_labels",
+})
+
+# Place classes that get city-style (red) labels.
+_CITY_CLASSES = frozenset({
+    "city", "town", "state", "country", "continent",
+})
+
+
+def _max_label_len(zoom: int) -> int:
+    """Maximum label length (characters) by zoom level."""
+    if zoom >= 14:
+        return 20
+    elif zoom >= 10:
+        return 15
+    elif zoom >= 7:
+        return 12
+    return 8
 
 
 class VectorRenderer:
@@ -213,6 +236,18 @@ class VectorRenderer:
         style_name = _LAYER_TO_STYLE.get(layer, "default")
 
         if geom_type == "Point":
+            if layer in _LABEL_LAYERS:
+                name = feature.get("properties", {}).get("name", "")
+                if name:
+                    feat_class = feature.get("properties", {}).get("class", "")
+                    label_style = (
+                        "label_city" if feat_class in _CITY_CLASSES else style_name
+                    )
+                    self._draw_label_point(
+                        canvas, coords, tile_x, tile_y, tile_z,
+                        center_lat, center_lon, zoom, name, label_style,
+                    )
+                    return
             self._draw_point(
                 canvas, coords, tile_x, tile_y, tile_z,
                 center_lat, center_lon, zoom, style_name,
@@ -309,6 +344,30 @@ class VectorRenderer:
         )
         canvas.set_dot(bx, by)
         canvas.set_cell_style(bx // 2, by // 4, style_name)
+
+    def _draw_label_point(
+        self,
+        canvas: BrailleCanvas,
+        coords: list,
+        tile_x: int,
+        tile_y: int,
+        tile_z: int,
+        center_lat: float,
+        center_lon: float,
+        zoom: int,
+        name: str,
+        style_name: str,
+    ) -> None:
+        """Render a place/label feature as text on the canvas."""
+        bx, by = self._to_braille(
+            coords[0], coords[1],
+            tile_x, tile_y, tile_z,
+            center_lat, center_lon, zoom, canvas,
+        )
+        max_len = _max_label_len(zoom)
+        if len(name) > max_len:
+            name = name[: max_len - 1] + "\u2026"
+        canvas.draw_text(bx, by, name, style_name=style_name)
 
     def _draw_linestring(
         self,

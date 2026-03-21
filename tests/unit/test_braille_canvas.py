@@ -332,14 +332,14 @@ class TestRenderRich:
         """set_cell_style should assign a feature type that render_rich uses."""
         c = BrailleCanvas(3, 1)
         c.set_dot(0, 0)
-        c.set_cell_style(0, 0, "water")
+        c.set_cell_style(0, 0, "road")
         rows = c.render_rich()
         # Extract the style of the first span
         spans = rows[0]._spans
         assert len(spans) >= 1
-        # The first character should have the water style
-        water_style = get_style("water")
-        assert spans[0].style == water_style
+        # The first character should have the road style
+        road_style = get_style("road")
+        assert spans[0].style == road_style
 
     def test_set_region_style_colors_multiple_cells(self):
         """set_region_style should apply the feature type to all cells in the region."""
