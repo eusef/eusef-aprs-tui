@@ -67,6 +67,7 @@ class MapPanel(Widget, can_focus=True):
         Binding("N", "prev_station", "Prev Station", show=False),
         Binding("f", "toggle_fullscreen", "Fullscreen", show=False),
         Binding("enter", "activate_station", "Info", show=False),
+        Binding("ctrl+g", "jump_to_coords", "Jump To", show=False),
     ]
 
     # Reactive state — changes to these automatically trigger re-render
@@ -252,6 +253,7 @@ class MapPanel(Widget, can_focus=True):
             ("t", "Trk"),
             ("f", "Full"),
             ("g", "Legend"),
+            ("^G", "Goto"),
             ("m", "Close"),
         ]
         for i, (key, label) in enumerate(keys):
@@ -555,3 +557,28 @@ class MapPanel(Widget, can_focus=True):
             except ValueError:
                 self.selected_callsign = calls[-1]
         self.post_message(self.StationSelected(self._selected_callsign))
+
+    # ------------------------------------------------------------------
+    # Jump-to navigation (#53)
+    # ------------------------------------------------------------------
+
+    def jump_to(self, lat: float, lon: float) -> None:
+        """Centre the map on (lat, lon) and disable auto-zoom.
+
+        Called programmatically by the app after the user enters coordinates
+        via :class:`~aprs_tui.ui.jump_to_screen.JumpToScreen`.
+        """
+        self._disable_auto_zoom()
+        self.center_lat = lat
+        self.center_lon = lon
+        self.refresh()
+
+    def action_jump_to_coords(self) -> None:
+        """Show coordinate input overlay and jump to the entered position."""
+        from aprs_tui.ui.jump_to_screen import JumpToScreen
+
+        def _on_result(result: tuple[float, float] | None) -> None:
+            if result is not None:
+                self.jump_to(*result)
+
+        self.app.push_screen(JumpToScreen(), callback=_on_result)

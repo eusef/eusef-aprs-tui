@@ -74,6 +74,7 @@ class APRSCommandProvider(Provider):
             ("Map: Download offline maps", "map_download"),
             ("Map: List available maps", "map_list"),
             ("Map: Toggle auto-zoom", "map_auto_zoom"),
+            ("Map: Jump to coordinates", "map_jump"),
             ("Quit application", "quit"),
         ]
 
@@ -113,6 +114,8 @@ class APRSCommandProvider(Provider):
                 app.action_map_list()
             elif action_id == "map_auto_zoom":
                 app.action_map_auto_zoom()
+            elif action_id == "map_jump":
+                app.action_map_jump()
             elif action_id.startswith("config_"):
                 section = action_id.replace("config_", "")
                 if section == "all":
