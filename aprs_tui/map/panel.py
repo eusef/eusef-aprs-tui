@@ -88,6 +88,7 @@ class MapPanel(Widget, can_focus=True):
         self._station_tracker = station_tracker
         self._own_callsign = own_callsign
         self._selected_callsign: str | None = None
+        self._g_pending: bool = False  # chord state for g→h / g→s
         self._renderer = MapRenderer()
 
         # Config defaults
@@ -100,6 +101,8 @@ class MapPanel(Widget, can_focus=True):
         # Auto-zoom controller
         own_lat = cfg.get("own_lat", 0.0)
         own_lon = cfg.get("own_lon", 0.0)
+        self._own_lat = own_lat
+        self._own_lon = own_lon
         self.center_lat = own_lat
         self.center_lon = own_lon
         self._auto_zoom = AutoZoomController(
@@ -252,7 +255,9 @@ class MapPanel(Widget, can_focus=True):
             ("d", "Digi"),
             ("t", "Trk"),
             ("f", "Full"),
-            ("g", "Legend"),
+            ("l", "Legend"),
+            ("gh", "Home"),
+            ("gs", "Sel"),
             ("^G", "Goto"),
             ("m", "Close"),
         ]
@@ -438,6 +443,30 @@ class MapPanel(Widget, can_focus=True):
         key = event.key
         char = event.character
 
+        # g-chord handling: g→h (home), g→s (selected station)
+        if self._g_pending:
+            self._g_pending = False
+            if char == "h":
+                self.jump_to(self._own_lat, self._own_lon)
+                event.prevent_default()
+                return
+            if char == "s":
+                if self._selected_callsign and self._station_tracker:
+                    station = self._station_tracker.get_station(
+                        self._selected_callsign
+                    )
+                    if station and station.latitude is not None and station.longitude is not None:
+                        self.jump_to(station.latitude, station.longitude)
+                event.prevent_default()
+                return
+            # Any other key after g — cancel chord, fall through
+
+        # g chord prefix — start waiting for second key
+        if char == "g":
+            self._g_pending = True
+            event.prevent_default()
+            return
+
         # Zoom keys — handle all variations of +/= and -/_
         if char in ("+", "="):
             self.action_zoom_in()
@@ -448,8 +477,8 @@ class MapPanel(Widget, can_focus=True):
             event.prevent_default()
             return
 
-        # Legend toggle
-        if char == "g":
+        # Legend toggle (moved from g to l — g is now chord prefix for jump commands)
+        if char == "l":
             self._show_legend = not self._show_legend
             self.refresh()
             event.prevent_default()
@@ -581,4 +610,7 @@ class MapPanel(Widget, can_focus=True):
             if result is not None:
                 self.jump_to(*result)
 
-        self.app.push_screen(JumpToScreen(), callback=_on_result)
+        self.app.push_screen(
+            JumpToScreen(station_tracker=self._station_tracker),
+            callback=_on_result,
+        )

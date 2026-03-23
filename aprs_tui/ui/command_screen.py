@@ -32,13 +32,16 @@ COMMANDS = [
     ("a", "Auto Zoom", "Toggle auto-zoom (when map focused)"),
     ("0", "Reset Zoom", "Re-enable auto-zoom and recalculate"),
     ("n/N", "Stations", "Cycle to next/previous station on map"),
-    ("g", "Legend", "Toggle map legend overlay"),
+    ("l", "Legend", "Toggle map legend overlay"),
     ("i", "Hide IS", "Toggle APRS-IS stations on map"),
     ("R", "Hide RF", "Toggle RF stations on map"),
     ("w", "Hide WX", "Toggle weather stations on map"),
     ("d", "Hide Digi", "Toggle digipeaters/iGates on map"),
     ("t", "Tracks", "Toggle station movement trails on map"),
     ("f", "Fullscreen", "Fullscreen map (press f or Esc to exit)"),
+    ("^G", "Jump To", "Jump to coordinates, callsign, or grid square"),
+    ("gh", "Home", "Center map on own station"),
+    ("gs", "Selected", "Center map on selected station"),
 ]
 
 

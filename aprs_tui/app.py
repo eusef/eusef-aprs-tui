@@ -1318,6 +1318,14 @@ class APRSTuiApp(App):
         except Exception:
             pass
 
+    def action_map_jump(self) -> None:
+        """Open jump-to modal on the map panel."""
+        try:
+            map_panel = self.query_one("#map-panel", MapPanel)
+            map_panel.action_jump_to_coords()
+        except Exception:
+            pass
+
     def action_map_list(self) -> None:
         """Show available offline maps."""
         try:

@@ -1,16 +1,21 @@
 """Jump-to coordinates modal for the map panel.
 
-Lets the user type a lat/lon coordinate pair and jumps the map viewport there.
+Lets the user type a lat/lon coordinate pair, callsign, or Maidenhead grid
+square and jumps the map viewport there.
 
 Issue #53: Add jump-to commands for map navigation.
 """
 from __future__ import annotations
+
+import re
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
+
+from aprs_tui.core.station_tracker import StationTracker
 
 
 # ---------------------------------------------------------------------------
@@ -36,8 +41,6 @@ def parse_coordinates(text: str) -> tuple[float, float]:
         ValueError: If the input cannot be parsed or the coordinates are
             out of valid range (lat −90..90, lon −180..180).
     """
-    import re
-
     # Normalise: collapse commas and extra whitespace into a single space.
     cleaned = re.sub(r"[,]+", " ", text.strip())
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -60,19 +63,7 @@ def parse_coordinates(text: str) -> tuple[float, float]:
 
 
 def _parse_single(token: str, positive_negative: tuple[str, str]) -> float:
-    """Parse one coordinate token, handling optional NSEW prefix or suffix.
-
-    Args:
-        token: A single coordinate string, e.g. ``"47.6062N"`` or ``"-122.33"``.
-        positive_negative: A 2-tuple of ``(positive_letter, negative_letter)``
-            e.g. ``("N", "S")`` for latitude or ``("E", "W")`` for longitude.
-
-    Returns:
-        Coordinate value as float (sign applied from direction letter if present).
-
-    Raises:
-        ValueError: If the token cannot be parsed as a number.
-    """
+    """Parse one coordinate token, handling optional NSEW prefix or suffix."""
     pos_letter, neg_letter = positive_negative
     token = token.strip().upper()
     sign = 1.0
@@ -100,11 +91,132 @@ def _parse_single(token: str, positive_negative: tuple[str, str]) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Maidenhead grid square converter
+# ---------------------------------------------------------------------------
+
+def maidenhead_to_latlon(grid: str) -> tuple[float, float]:
+    """Convert a Maidenhead grid locator to (lat, lon) at the square centre.
+
+    Supports 4, 6, or 8-character locators (e.g. CN87, CN87us, CN87us12).
+
+    Args:
+        grid: Maidenhead locator string.
+
+    Returns:
+        ``(latitude, longitude)`` as floats in decimal degrees.
+
+    Raises:
+        ValueError: If the locator is malformed.
+    """
+    grid = grid.strip()
+    length = len(grid)
+    if length not in (4, 6, 8):
+        raise ValueError(
+            f"Grid locator must be 4, 6, or 8 characters, got {length}: {grid!r}"
+        )
+
+    g = grid.upper()
+
+    # Field (first pair): A-R → 0-17
+    if not ("A" <= g[0] <= "R" and "A" <= g[1] <= "R"):
+        raise ValueError(f"Invalid field characters in {grid!r}")
+    lon = (ord(g[0]) - ord("A")) * 20 - 180
+    lat = (ord(g[1]) - ord("A")) * 10 - 90
+
+    # Square (second pair): 0-9
+    if not (g[2].isdigit() and g[3].isdigit()):
+        raise ValueError(f"Invalid square digits in {grid!r}")
+    lon += int(g[2]) * 2
+    lat += int(g[3]) * 1
+
+    # Subsquare resolution for centring
+    sub_lon = 2.0  # width of the square
+    sub_lat = 1.0
+
+    if length >= 6:
+        s = grid  # use original case for subsquare (a-x)
+        s4 = s[4].upper()
+        s5 = s[5].upper()
+        if not ("A" <= s4 <= "X" and "A" <= s5 <= "X"):
+            raise ValueError(f"Invalid subsquare characters in {grid!r}")
+        lon += (ord(s4) - ord("A")) * (2 / 24)
+        lat += (ord(s5) - ord("A")) * (1 / 24)
+        sub_lon = 2 / 24
+        sub_lat = 1 / 24
+
+    if length == 8:
+        if not (g[6].isdigit() and g[7].isdigit()):
+            raise ValueError(f"Invalid extended square digits in {grid!r}")
+        lon += int(g[6]) * (sub_lon / 10)
+        lat += int(g[7]) * (sub_lat / 10)
+        sub_lon /= 10
+        sub_lat /= 10
+
+    # Return centre of the smallest grid division
+    lon += sub_lon / 2
+    lat += sub_lat / 2
+
+    return lat, lon
+
+
+def _is_maidenhead(text: str) -> bool:
+    """Check if text looks like a Maidenhead grid locator."""
+    return bool(re.match(r"^[A-Ra-r]{2}\d{2}(?:[A-Xa-x]{2}(?:\d{2})?)?$", text))
+
+
+def _is_callsign(text: str) -> bool:
+    """Check if text looks like an amateur radio callsign."""
+    # Callsigns: 3-9 alphanumeric chars, must contain at least one digit
+    return bool(
+        re.match(r"^[A-Za-z0-9]{3,9}(-\d{1,2})?$", text)
+        and re.search(r"\d", text)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Input resolver — tries Maidenhead, callsign, then lat/lon
+# ---------------------------------------------------------------------------
+
+def resolve_input(
+    text: str,
+    station_tracker: StationTracker | None = None,
+) -> tuple[float, float]:
+    """Resolve user input to (lat, lon).
+
+    Tries in order: Maidenhead grid square, callsign lookup, lat/lon parse.
+
+    Raises:
+        ValueError: If no method can resolve the input.
+    """
+    cleaned = text.strip()
+    if not cleaned:
+        raise ValueError("No input provided")
+
+    # Try Maidenhead grid square
+    if _is_maidenhead(cleaned):
+        return maidenhead_to_latlon(cleaned)
+
+    # Try callsign lookup (single token, no spaces)
+    if " " not in cleaned and "," not in cleaned and _is_callsign(cleaned):
+        if station_tracker is not None:
+            station = station_tracker.get_station(cleaned.upper())
+            if station and station.latitude is not None and station.longitude is not None:
+                return station.latitude, station.longitude
+            raise ValueError(
+                f"Station {cleaned.upper()} not found or has no position"
+            )
+        raise ValueError(f"No station data available to look up {cleaned!r}")
+
+    # Fall back to lat/lon coordinate parsing
+    return parse_coordinates(cleaned)
+
+
+# ---------------------------------------------------------------------------
 # Modal screen
 # ---------------------------------------------------------------------------
 
 class JumpToScreen(ModalScreen[tuple[float, float] | None]):
-    """Small modal overlay that accepts a lat/lon coordinate pair.
+    """Small modal overlay that accepts coordinates, a callsign, or grid square.
 
     Dismisses with ``(lat, lon)`` on Enter, or ``None`` on Escape.
     """
@@ -148,22 +260,32 @@ class JumpToScreen(ModalScreen[tuple[float, float] | None]):
         Binding("escape", "cancel", "Cancel", priority=True),
     ]
 
+    def __init__(
+        self,
+        station_tracker: StationTracker | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._station_tracker = station_tracker
+
     def compose(self) -> ComposeResult:
         with Vertical(id="jump-outer"):
-            yield Static("Enter coordinates (decimal degrees):", id="jump-label")
+            yield Static(
+                "Enter coordinates, callsign, or grid square:", id="jump-label"
+            )
             yield Input(
-                placeholder="47.6062, -122.3321",
+                placeholder="47.6062, -122.3321  or  W7XXX  or  CN87",
                 id="jump-input",
             )
             yield Static(
-                "[dim]lat, lon  ·  or  ·  47.6N 122.3W[/dim]"
+                "[dim]lat, lon  ·  callsign  ·  grid square[/dim]"
                 "    [dim]Esc[/dim] Cancel",
                 id="jump-hint",
                 markup=True,
             )
 
     def on_mount(self) -> None:
-        self.query_one("#jump-outer").border_title = " Jump to Coordinates "
+        self.query_one("#jump-outer").border_title = " Jump To "
         self.query_one("#jump-input", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -173,7 +295,7 @@ class JumpToScreen(ModalScreen[tuple[float, float] | None]):
         if not text:
             return
         try:
-            lat, lon = parse_coordinates(text)
+            lat, lon = resolve_input(text, self._station_tracker)
         except ValueError as exc:
             self.query_one("#jump-hint", Static).update(
                 f"[bold #f85149]{exc}[/bold #f85149]",
