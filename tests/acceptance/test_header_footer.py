@@ -122,9 +122,9 @@ class TestFooterLayout:
     async def test_footer_exists_in_app(self):
         """The app composes an AppFooter widget (not Textual's built-in Footer)."""
         app = _make_app()
-        children = list(app.compose())
-        footer_widgets = [c for c in children if isinstance(c, AppFooter)]
-        assert len(footer_widgets) == 1
+        async with app.run_test():
+            footer_widgets = app.query(AppFooter)
+            assert len(footer_widgets) == 1
 
     def test_footer_is_widget(self):
         """AppFooter inherits from Widget."""
