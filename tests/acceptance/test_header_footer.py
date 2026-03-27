@@ -12,15 +12,14 @@ Architecture ref: docs/ARCHITECTURE-FEEDBACK-R1.md sections 3.1, 3.2
 from __future__ import annotations
 
 import pytest
-
 from textual.widget import Widget
 from textual.widgets import Static
 
-from aprs_tui.ui.status_bar import StatusBar
-from aprs_tui.ui.footer import AppFooter
-from aprs_tui.transport.base import ConnectionState
 from aprs_tui.app import APRSTuiApp
 from aprs_tui.config import AppConfig, StationConfig
+from aprs_tui.transport.base import ConnectionState
+from aprs_tui.ui.footer import AppFooter
+from aprs_tui.ui.status_bar import StatusBar
 
 
 def _make_app() -> APRSTuiApp:

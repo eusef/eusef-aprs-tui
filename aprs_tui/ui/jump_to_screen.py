@@ -17,7 +17,6 @@ from textual.widgets import Input, Static
 
 from aprs_tui.core.station_tracker import StationTracker
 
-
 # ---------------------------------------------------------------------------
 # Coordinate parser
 # ---------------------------------------------------------------------------

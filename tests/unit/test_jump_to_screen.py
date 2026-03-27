@@ -5,13 +5,12 @@ import pytest
 
 from aprs_tui.core.station_tracker import StationRecord, StationTracker
 from aprs_tui.ui.jump_to_screen import (
+    _is_callsign,
+    _is_maidenhead,
     maidenhead_to_latlon,
     parse_coordinates,
     resolve_input,
-    _is_callsign,
-    _is_maidenhead,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_coordinates
