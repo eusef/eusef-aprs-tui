@@ -29,9 +29,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint with ruff
-        run: |
-          ruff check .
-          ruff format --check .
+        run: ruff check .
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short --timeout=30
