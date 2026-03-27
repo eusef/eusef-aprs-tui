@@ -19,6 +19,10 @@ Connects to any KISS TCP endpoint: a local [Direwolf](https://github.com/wb2osz/
 - **Setup wizard** — interactive configuration for every hardware path, with live connection tests
 - **SSH-safe** — keyboard-only navigation, no mouse dependency
 - **tmux/screen friendly** — no terminal ownership assumptions
+- **Terminal map** — braille-rendered map with tile downloads, station overlay, and movement tracks
+- **Chat** — peer-to-peer messaging with compose, ack tracking, and retry
+- **Command palette** — `?` key opens searchable command list
+- **Direwolf management** — optionally manage a local Direwolf subprocess
 
 ## Requirements
 
@@ -26,49 +30,58 @@ Connects to any KISS TCP endpoint: a local [Direwolf](https://github.com/wb2osz/
 - Linux, macOS, or Raspberry Pi OS (WSL2 supported; Windows native not supported)
 - A KISS TCP endpoint — Direwolf, a Bluetooth TNC bridge, or APRS-IS
 
-Direwolf is **not** managed by this application. If you're using a radio TNC, install and configure Direwolf separately with `KISSPORT 8001` set in `direwolf.conf`. See [wb2osz/direwolf](https://github.com/wb2osz/direwolf).
+Direwolf can run standalone or be managed as a subprocess by the TUI. For standalone use, install and configure Direwolf separately with `KISSPORT 8001` set in `direwolf.conf`. See [wb2osz/direwolf](https://github.com/wb2osz/direwolf).
 
 ## Installation
 
+### Recommended (one command)
+
 ```bash
-git clone https://github.com/your-org/aprs-tui.git
-cd aprs-tui
+git clone https://github.com/eusef/eusef-aprs-tui.git
+cd eusef-aprs-tui
+./setup.sh
+```
+
+`setup.sh` detects your OS, installs system dependencies (`socat`, `python3`), creates a virtualenv, and installs all Python packages.
+
+### Manual
+
+```bash
+git clone https://github.com/eusef/eusef-aprs-tui.git
+cd eusef-aprs-tui
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For the setup wizard (recommended for first-time setup):
-
-```bash
-pip install -r requirements-wizard.txt
-```
-
 ## Quick Start
 
-**First run** — the TUI will detect no config and launch the wizard automatically:
+First run - the TUI detects no config and launches the wizard automatically:
 
 ```bash
+./start.sh
+```
+
+Or without the wrapper:
+
+```bash
+source .venv/bin/activate
 python -m aprs_tui
 ```
 
-Or run the wizard directly:
+Run the wizard standalone:
 
 ```bash
-python wizard.py
+./wizard.sh                        # or: python wizard.py
+./wizard.sh --section server       # change just the connection
 ```
 
-Once configured, launch the TUI:
+### CLI flags
 
-```bash
-python -m aprs_tui
-```
-
-Use a custom config path:
-
-```bash
-python -m aprs_tui --config /path/to/config.toml
-```
+| Flag | Description |
+|---|---|
+| `--config PATH` | Use a custom config file |
+| `--log-level LEVEL` | `DEBUG`, `INFO`, `WARNING` (default), or `ERROR` |
 
 ## Setup Wizard
 
@@ -169,11 +182,62 @@ The wizard will find the server automatically on future runs. Service type: `_ki
 
 ## Keyboard Reference
 
+### General
+
 | Key | Action |
 |---|---|
-| `Tab` | Move between panels |
+| `q` | Quit |
+| `?` | Command palette |
+| `Ctrl+W` | Config wizard |
+| `Tab` | Next panel |
 | `j` / `k` | Scroll up / down |
+| `:` | Command mode |
 | `F2` | Quick-switch server (field switch) |
+
+### Messages
+
+| Key | Action |
+|---|---|
+| `c` | Compose message |
+| `Enter` | Open chat (from station list) |
+| `x` | Cancel message retries |
+| `y` | Copy last packet |
+
+### Map
+
+| Key | Action |
+|---|---|
+| `m` / `M` | Toggle map (large / small) |
+| `+` / `-` | Zoom in / out |
+| Arrow keys | Pan (Shift = fast) |
+| `a` | Auto-zoom toggle |
+| `0` | Reset zoom |
+| `n` / `N` | Next / prev station |
+| `f` | Fullscreen map |
+| `g` | Legend toggle |
+
+### Map Filters
+
+| Key | Action |
+|---|---|
+| `i` | APRS-IS stations |
+| `R` | RF stations |
+| `w` | Weather |
+| `d` | Digipeaters |
+| `t` | Tracks |
+
+### Other
+
+| Key | Action |
+|---|---|
+| `b` | Beacon on / off |
+| `r` | Raw packets |
+| `Esc` | Close overlay |
+
+### Commands
+
+| Command | Action |
+|---|---|
 | `:config` | Full reconfigure (launches wizard) |
 | `:config server` | Switch server / connection type |
 | `:config bt` | Re-pair Bluetooth device |
@@ -202,14 +266,51 @@ Transmitting to APRS-IS requires a validated callsign passcode. Receive-only mod
 | -9 | Mobile / vehicle |
 | -14 | Netbook / tablet |
 
+## Troubleshooting
+
+Logs are written to a platform-specific data directory:
+
+| Platform | Path |
+|---|---|
+| Linux | `~/.local/share/aprs-tui/aprs-tui.log` |
+| macOS | `~/Library/Application Support/aprs-tui/aprs-tui.log` |
+
+Increase verbosity:
+
+```bash
+python -m aprs_tui --log-level DEBUG
+```
+
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
-pytest
-pytest -m "not slow"         # skip slow integration tests
-pytest -m "not bluetooth"    # skip tests requiring BT hardware
+./setup.sh                           # or: pip install -r requirements-dev.txt
 ```
+
+### Tests
+
+Three tiers, all run in CI:
+
+| Tier | Command | Timeout |
+|---|---|---|
+| Unit | `pytest tests/unit/ -v` | 30s |
+| Integration | `pytest tests/integration/ -v` | 60s |
+| Acceptance | `pytest tests/acceptance/ -v` | 120s |
+
+Skip hardware-dependent tests:
+
+```bash
+pytest -m "not slow"
+pytest -m "not bluetooth"
+pytest -m "not serial"
+```
+
+### Code quality
+
+- **Linter:** Ruff (rules: E, F, W, I, N, UP, B, A, SIM)
+- **Line length:** 100
+- **Coverage floor:** 80% (enforced in CI)
+- **CI matrix:** Python 3.11 / 3.12 / 3.13 on Ubuntu + macOS
 
 ## Support This Project
 
